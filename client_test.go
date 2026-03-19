@@ -65,9 +65,20 @@ func TestConfigValidate(t *testing.T) {
 		{"missing apiKey", func(c *Config) { c.Providers["openai"] = ProviderConfig{Type: "openai", BaseURL: "https://x.com"} }, true},
 		{"insecure http URL", func(c *Config) { c.Providers["openai"] = ProviderConfig{Type: "openai", APIKey: "k", BaseURL: "http://api.openai.com"} }, true},
 		{"localhost http allowed", func(c *Config) { c.Providers["openai"] = ProviderConfig{Type: "openai", APIKey: "k", BaseURL: "http://localhost:11434"} }, false},
+		{"0.0.0.0 allowed for Docker", func(c *Config) { c.Providers["openai"] = ProviderConfig{Type: "openai", APIKey: "k", BaseURL: "http://0.0.0.0:11434"} }, false},
 		{"ollama no apikey ok", func(c *Config) {
 			c.Providers["local"] = ProviderConfig{Type: "ollama", BaseURL: "http://localhost:11434"}
 		}, false},
+		{"fallback references unconfigured provider", func(c *Config) {
+			c.Fallbacks = []string{"anthropic/claude-opus-4-6"}
+		}, true},
+		{"fallback references configured provider", func(c *Config) {
+			c.Providers["anthropic"] = ProviderConfig{Type: "anthropic", APIKey: "k", BaseURL: "https://api.anthropic.com"}
+			c.Fallbacks = []string{"anthropic/claude-opus-4-6"}
+		}, false},
+		{"fallback invalid format", func(c *Config) {
+			c.Fallbacks = []string{"invalid"}
+		}, true},
 	}
 
 	for _, tt := range tests {
@@ -208,5 +219,61 @@ func TestClientConcurrency(t *testing.T) {
 	total, _, _, _ := c.Stats.Get()
 	if total != workers {
 		t.Errorf("expected %d total requests, got %d", workers, total)
+	}
+}
+
+// ─── Health ────────────────────────────────────────────────────────────────────
+
+func TestClientHealth(t *testing.T) {
+	c, err := NewClient(Config{
+		Primary: "openai/gpt-4o",
+		Providers: map[string]ProviderConfig{
+			"openai": {Type: "openai", APIKey: "sk-test", BaseURL: "https://api.openai.com"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	results := c.Health(context.Background())
+	if _, ok := results["openai"]; !ok {
+		t.Error("Health() must return an entry for every configured provider")
+	}
+}
+
+// ─── Fallback validation ───────────────────────────────────────────────────────
+
+func TestFallbackValidation(t *testing.T) {
+	// Fallback referencing a provider not in the providers map.
+	_, err := NewClient(Config{
+		Primary: "openai/gpt-4o",
+		Providers: map[string]ProviderConfig{
+			"openai": {Type: "openai", APIKey: "sk-test", BaseURL: "https://api.openai.com"},
+		},
+		Fallbacks: []string{"anthropic/claude-opus-4-6"}, // anthropic not configured
+	})
+	if err == nil {
+		t.Error("expected error for fallback referencing unconfigured provider")
+	}
+}
+
+// ─── Stream stats ──────────────────────────────────────────────────────────────
+
+func TestStreamStatsRecordedOnFailure(t *testing.T) {
+	c, _ := NewClient(Config{
+		Primary: "openai/gpt-4o",
+		Providers: map[string]ProviderConfig{
+			"openai": {Type: "openai", APIKey: "sk-test", BaseURL: "https://api.openai.com"},
+		},
+		Retry: 0,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	c.Stream(ctx, &Request{Messages: []Message{SimpleMessage("user", "hi")}}) //nolint:errcheck
+
+	total, _, _, _ := c.Stats.Get()
+	if total == 0 {
+		t.Error("Stats must be incremented even when Stream returns an error")
 	}
 }

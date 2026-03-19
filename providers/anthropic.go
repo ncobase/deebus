@@ -33,14 +33,19 @@ func NewAnthropic(cfg Config) *AnthropicProvider {
 
 func (p *AnthropicProvider) Name() string { return "anthropic" }
 
+// defaultMaxTokens is used when the caller does not specify MaxTokens.
+// Anthropic's API requires max_tokens; there is no server-side default.
+const defaultMaxTokens = 4096
+
 func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
+	maxTokens := defaultMaxTokens
+	if req.MaxTokens > 0 {
+		maxTokens = req.MaxTokens
+	}
 	body := map[string]any{
 		"model":      req.Model,
 		"messages":   ConvertToAnthropicFormat(req.Messages),
-		"max_tokens": 1024,
-	}
-	if req.MaxTokens > 0 {
-		body["max_tokens"] = req.MaxTokens
+		"max_tokens": maxTokens,
 	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
@@ -92,6 +97,10 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
+	if len(result.Content) == 0 {
+		return nil, fmt.Errorf("empty response from anthropic")
+	}
+
 	content := ""
 	var toolCalls []ToolCall
 	for _, block := range result.Content {
@@ -123,14 +132,15 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 }
 
 func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
+	maxTokens := defaultMaxTokens
+	if req.MaxTokens > 0 {
+		maxTokens = req.MaxTokens
+	}
 	body := map[string]any{
 		"model":      req.Model,
 		"messages":   ConvertToAnthropicFormat(req.Messages),
-		"max_tokens": 1024,
+		"max_tokens": maxTokens,
 		"stream":     true,
-	}
-	if req.MaxTokens > 0 {
-		body["max_tokens"] = req.MaxTokens
 	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature

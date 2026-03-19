@@ -87,13 +87,24 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("provider %q: apiKey required", name)
 		}
 	}
+	// Validate that every model in the fallback chain references a configured provider.
+	for _, fb := range c.Fallbacks {
+		providerName, _, err := parseModel(fb)
+		if err != nil {
+			return fmt.Errorf("fallback %q: %w", fb, err)
+		}
+		if _, ok := c.Providers[providerName]; !ok {
+			return fmt.Errorf("fallback %q: provider %q not configured", fb, providerName)
+		}
+	}
 	return nil
 }
 
 func isAllowedURL(u string) bool {
 	return strings.HasPrefix(u, "https://") ||
 		strings.HasPrefix(u, "http://localhost") ||
-		strings.HasPrefix(u, "http://127.0.0.1")
+		strings.HasPrefix(u, "http://127.0.0.1") ||
+		strings.HasPrefix(u, "http://0.0.0.0") // Docker / container environments
 }
 
 // ─── Client ───────────────────────────────────────────────────────────────────
@@ -224,7 +235,8 @@ func (c *Client) Complete(ctx context.Context, req *Request) (*Response, error) 
 }
 
 // Stream initiates a streaming completion. Fallback semantics are identical
-// to Complete.
+// to Complete. Stats are recorded when the returned channel is fully consumed
+// (closed or done chunk received).
 func (c *Client) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
 	r := *req
 
@@ -245,7 +257,7 @@ func (c *Client) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk,
 		r.Model = modelName
 		ch, err := p.Stream(ctx, &r)
 		if err == nil {
-			return ch, nil
+			return c.wrapStream(ctx, ch), nil
 		}
 
 		lastErr = err
@@ -254,6 +266,7 @@ func (c *Client) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk,
 		}
 	}
 
+	c.Stats.RecordRequest(false, 0)
 	return nil, fmt.Errorf("all providers failed for streaming: %w", lastErr)
 }
 
@@ -291,7 +304,54 @@ func (c *Client) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, 
 	return nil, fmt.Errorf("all providers failed for embedding: %w", lastErr)
 }
 
+// Health calls Health on every configured provider and returns a map of
+// provider name → error. A nil error means the provider is reachable.
+// Providers that return a non-nil error are reported but do not prevent
+// other providers from being checked.
+func (c *Client) Health(ctx context.Context) map[string]error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	results := make(map[string]error, len(c.providers))
+	for name, p := range c.providers {
+		results[name] = p.Health(ctx)
+	}
+	return results
+}
+
 // ─── Internal helpers ─────────────────────────────────────────────────────────
+
+// wrapStream proxies chunks from in to a new channel, recording Stats when
+// the stream ends. It also guards against the consumer stopping mid-stream.
+func (c *Client) wrapStream(ctx context.Context, in <-chan *StreamChunk) <-chan *StreamChunk {
+	out := make(chan *StreamChunk, 16)
+	go func() {
+		defer close(out)
+		success := true
+		for {
+			select {
+			case chunk, ok := <-in:
+				if !ok {
+					c.Stats.RecordRequest(success, 0)
+					return
+				}
+				if chunk.Error != nil {
+					success = false
+				}
+				select {
+				case out <- chunk:
+				case <-ctx.Done():
+					c.Stats.RecordRequest(false, 0)
+					return
+				}
+			case <-ctx.Done():
+				c.Stats.RecordRequest(false, 0)
+				return
+			}
+		}
+	}()
+	return out
+}
 
 // modelChain returns [primary, fallback1, fallback2, …].
 func (c *Client) modelChain() []string {

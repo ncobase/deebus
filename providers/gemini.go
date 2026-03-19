@@ -101,8 +101,15 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 // Stream implements streaming via Gemini's SSE endpoint (:streamGenerateContent?alt=sse).
 func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
 	body := map[string]any{"contents": ConvertToGeminiFormat(req.Messages)}
-	if req.MaxTokens > 0 {
-		body["generationConfig"] = map[string]any{"maxOutputTokens": req.MaxTokens}
+	if req.Temperature > 0 || req.MaxTokens > 0 {
+		gc := map[string]any{}
+		if req.Temperature > 0 {
+			gc["temperature"] = req.Temperature
+		}
+		if req.MaxTokens > 0 {
+			gc["maxOutputTokens"] = req.MaxTokens
+		}
+		body["generationConfig"] = gc
 	}
 
 	data, err := json.Marshal(body)
