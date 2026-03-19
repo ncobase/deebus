@@ -12,7 +12,13 @@ import (
 	"time"
 )
 
+// anthropicVersion is the required API version header value.
+// Anthropic keeps this constant; new capabilities are gated by anthropic-beta.
 const anthropicVersion = "2023-06-01"
+
+// defaultMaxTokens is used when the caller does not specify MaxTokens.
+// Anthropic's API requires the field; there is no server-side default.
+const defaultMaxTokens = 4096
 
 // AnthropicProvider implements Provider for the Anthropic Messages API.
 type AnthropicProvider struct {
@@ -33,25 +39,30 @@ func NewAnthropic(cfg Config) *AnthropicProvider {
 
 func (p *AnthropicProvider) Name() string { return "anthropic" }
 
-// defaultMaxTokens is used when the caller does not specify MaxTokens.
-// Anthropic's API requires max_tokens; there is no server-side default.
-const defaultMaxTokens = 4096
-
 func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
 	maxTokens := defaultMaxTokens
 	if req.MaxTokens > 0 {
 		maxTokens = req.MaxTokens
 	}
+
+	system, msgs := ExtractSystemMessage(req.Messages)
+
 	body := map[string]any{
 		"model":      req.Model,
-		"messages":   ConvertToAnthropicFormat(req.Messages),
+		"messages":   ConvertToAnthropicFormat(msgs),
 		"max_tokens": maxTokens,
+	}
+	if system != "" {
+		body["system"] = system
 	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
 	}
 	if len(req.Tools) > 0 {
-		body["tools"] = req.Tools
+		body["tools"] = ConvertToolsToAnthropic(req.Tools)
+		if req.ToolChoice != "" {
+			body["tool_choice"] = AnthropicToolChoice(req.ToolChoice)
+		}
 	}
 
 	data, err := json.Marshal(body)
@@ -109,14 +120,13 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 			content = block.Text
 		case "tool_use":
 			args, _ := json.Marshal(block.Input)
-			toolCalls = append(toolCalls, ToolCall{
+			tc := ToolCall{
 				ID:   block.ID,
 				Type: "function",
-				Function: struct {
-					Name      string `json:"name"`
-					Arguments string `json:"arguments"`
-				}{Name: block.Name, Arguments: string(args)},
-			})
+			}
+			tc.Function.Name = block.Name
+			tc.Function.Arguments = string(args)
+			toolCalls = append(toolCalls, tc)
 		}
 	}
 
@@ -136,14 +146,26 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 	if req.MaxTokens > 0 {
 		maxTokens = req.MaxTokens
 	}
+
+	system, msgs := ExtractSystemMessage(req.Messages)
+
 	body := map[string]any{
 		"model":      req.Model,
-		"messages":   ConvertToAnthropicFormat(req.Messages),
+		"messages":   ConvertToAnthropicFormat(msgs),
 		"max_tokens": maxTokens,
 		"stream":     true,
 	}
+	if system != "" {
+		body["system"] = system
+	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
+	}
+	if len(req.Tools) > 0 {
+		body["tools"] = ConvertToolsToAnthropic(req.Tools)
+		if req.ToolChoice != "" {
+			body["tool_choice"] = AnthropicToolChoice(req.ToolChoice)
+		}
 	}
 
 	data, err := json.Marshal(body)
@@ -174,6 +196,51 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 		defer close(ch)
 		defer resp.Body.Close()
 
+		// blockAccumulator tracks state for one content block.
+		type blockAccumulator struct {
+			blockType   string // "text" or "tool_use"
+			toolID      string
+			toolName    string
+			jsonBuilder strings.Builder
+		}
+		blocks := map[int]*blockAccumulator{}
+
+		var inputTokens, outputTokens int
+		var stopReason string
+
+		// Unified event shape — fields present depend on event type.
+		var event struct {
+			Type  string `json:"type"`
+			Index int    `json:"index"`
+
+			// content_block_start
+			ContentBlock struct {
+				Type string `json:"type"`
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"content_block"`
+
+			// content_block_delta
+			Delta struct {
+				Type        string `json:"type"`
+				Text        string `json:"text"`
+				PartialJSON string `json:"partial_json"`
+				StopReason  string `json:"stop_reason"`
+			} `json:"delta"`
+
+			// message_start
+			Message struct {
+				Usage struct {
+					InputTokens int `json:"input_tokens"`
+				} `json:"usage"`
+			} `json:"message"`
+
+			// message_delta usage
+			Usage struct {
+				OutputTokens int `json:"output_tokens"`
+			} `json:"usage"`
+		}
+
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -182,39 +249,76 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 			}
 			payload := strings.TrimPrefix(line, "data: ")
 
-			var event struct {
-				Type  string `json:"type"`
-				Delta struct {
-					Type         string `json:"type"`
-					Text         string `json:"text"`
-					StopReason   string `json:"stop_reason"`
-				} `json:"delta"`
-			}
+			// Reset before each decode to avoid stale fields.
+			event.Type = ""
+			event.Index = 0
+			event.ContentBlock.Type = ""
+			event.ContentBlock.ID = ""
+			event.ContentBlock.Name = ""
+			event.Delta.Type = ""
+			event.Delta.Text = ""
+			event.Delta.PartialJSON = ""
+			event.Delta.StopReason = ""
 
 			if err := json.Unmarshal([]byte(payload), &event); err != nil {
 				continue
 			}
 
 			switch event.Type {
+			case "message_start":
+				inputTokens = event.Message.Usage.InputTokens
+
+			case "content_block_start":
+				blocks[event.Index] = &blockAccumulator{
+					blockType: event.ContentBlock.Type,
+					toolID:    event.ContentBlock.ID,
+					toolName:  event.ContentBlock.Name,
+				}
+
 			case "content_block_delta":
-				if event.Delta.Type == "text_delta" && event.Delta.Text != "" {
-					select {
-					case ch <- &StreamChunk{Content: event.Delta.Text}:
-					case <-ctx.Done():
-						return
-					}
+				acc, ok := blocks[event.Index]
+				if !ok {
+					continue
 				}
+				switch event.Delta.Type {
+				case "text_delta":
+					if event.Delta.Text != "" {
+						select {
+						case ch <- &StreamChunk{Content: event.Delta.Text}:
+						case <-ctx.Done():
+							return
+						}
+					}
+				case "input_json_delta":
+					acc.jsonBuilder.WriteString(event.Delta.PartialJSON)
+				}
+
 			case "message_delta":
-				if event.Delta.StopReason != "" {
-					select {
-					case ch <- &StreamChunk{Done: true, FinishReason: event.Delta.StopReason}:
-					case <-ctx.Done():
-					}
-					return
-				}
+				stopReason = event.Delta.StopReason
+				outputTokens = event.Usage.OutputTokens
+
 			case "message_stop":
+				// Assemble any tool calls from accumulated blocks.
+				var toolCalls []ToolCall
+				for _, acc := range blocks {
+					if acc.blockType == "tool_use" {
+						tc := ToolCall{
+							ID:   acc.toolID,
+							Type: "function",
+						}
+						tc.Function.Name = acc.toolName
+						tc.Function.Arguments = acc.jsonBuilder.String()
+						toolCalls = append(toolCalls, tc)
+					}
+				}
+				final := &StreamChunk{
+					Done:         true,
+					FinishReason: stopReason,
+					TokensUsed:   inputTokens + outputTokens,
+					ToolCalls:    toolCalls,
+				}
 				select {
-				case ch <- &StreamChunk{Done: true, FinishReason: "stop"}:
+				case ch <- final:
 				case <-ctx.Done():
 				}
 				return

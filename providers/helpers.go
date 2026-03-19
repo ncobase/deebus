@@ -55,10 +55,96 @@ func ExtractText(content []ContentBlock) string {
 	return ""
 }
 
+// ExtractSystemMessage splits system-role messages out of the conversation.
+// Returns the concatenated system text and the remaining messages.
+// Most providers (Anthropic, Gemini) require the system prompt as a separate
+// top-level field rather than a message in the array.
+func ExtractSystemMessage(messages []Message) (system string, rest []Message) {
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			if system != "" {
+				system += "\n"
+			}
+			system += ExtractText(msg.Content)
+		} else {
+			rest = append(rest, msg)
+		}
+	}
+	return
+}
+
+// ConvertToolsToAnthropic converts the unified Tool slice to Anthropic's format.
+// Anthropic uses "input_schema" instead of "parameters" and does not wrap
+// tools in a "function" envelope.
+func ConvertToolsToAnthropic(tools []Tool) []map[string]any {
+	result := make([]map[string]any, len(tools))
+	for i, t := range tools {
+		result[i] = map[string]any{
+			"name":         t.Function.Name,
+			"description":  t.Function.Description,
+			"input_schema": t.Function.Parameters,
+		}
+	}
+	return result
+}
+
+// ConvertToolsToGemini converts the unified Tool slice to Gemini's
+// functionDeclarations format, wrapped in the tools array.
+func ConvertToolsToGemini(tools []Tool) []map[string]any {
+	decls := make([]map[string]any, len(tools))
+	for i, t := range tools {
+		decls[i] = map[string]any{
+			"name":        t.Function.Name,
+			"description": t.Function.Description,
+			"parameters":  t.Function.Parameters,
+		}
+	}
+	return []map[string]any{{"functionDeclarations": decls}}
+}
+
+// GeminiToolConfig converts a ToolChoice string to Gemini's toolConfig object.
+// "auto" → AUTO (default), "none" → NONE, "required" → ANY.
+func GeminiToolConfig(choice string) map[string]any {
+	mode := "AUTO"
+	switch choice {
+	case "none":
+		mode = "NONE"
+	case "required":
+		mode = "ANY"
+	}
+	return map[string]any{
+		"functionCallingConfig": map[string]any{"mode": mode},
+	}
+}
+
+// AnthropicToolChoice converts a ToolChoice string to Anthropic's tool_choice object.
+func AnthropicToolChoice(choice string) map[string]any {
+	switch choice {
+	case "none":
+		return map[string]any{"type": "none"}
+	case "required":
+		return map[string]any{"type": "any"}
+	case "auto", "":
+		return map[string]any{"type": "auto"}
+	default:
+		// Specific function name
+		return map[string]any{"type": "tool", "name": choice}
+	}
+}
+
 // ConvertToOpenAIFormat converts messages to the OpenAI chat-completions format.
 func ConvertToOpenAIFormat(messages []Message) []map[string]any {
 	out := make([]map[string]any, 0, len(messages))
 	for _, msg := range messages {
+		// Tool result messages use a flat string content
+		if msg.Role == "tool" {
+			out = append(out, map[string]any{
+				"role":    "tool",
+				"content": ExtractText(msg.Content),
+			})
+			continue
+		}
+
 		parts := make([]map[string]any, 0, len(msg.Content))
 		for _, block := range msg.Content {
 			switch b := block.(type) {
@@ -93,10 +179,15 @@ func ConvertToOpenAIFormat(messages []Message) []map[string]any {
 	return out
 }
 
-// ConvertToAnthropicFormat converts messages to the Anthropic Messages API format.
+// ConvertToAnthropicFormat converts non-system messages to the Anthropic
+// Messages API format. System messages must be extracted separately via
+// ExtractSystemMessage.
 func ConvertToAnthropicFormat(messages []Message) []map[string]any {
 	out := make([]map[string]any, 0, len(messages))
 	for _, msg := range messages {
+		if msg.Role == "system" {
+			continue // handled by caller via ExtractSystemMessage
+		}
 		parts := make([]map[string]any, 0, len(msg.Content))
 		for _, block := range msg.Content {
 			switch b := block.(type) {
@@ -128,10 +219,14 @@ func ConvertToAnthropicFormat(messages []Message) []map[string]any {
 	return out
 }
 
-// ConvertToGeminiFormat converts messages to the Gemini generateContent format.
+// ConvertToGeminiFormat converts non-system messages to the Gemini
+// generateContent format. System messages must be handled via systemInstruction.
 func ConvertToGeminiFormat(messages []Message) []map[string]any {
 	out := make([]map[string]any, 0, len(messages))
 	for _, msg := range messages {
+		if msg.Role == "system" {
+			continue // handled by caller via systemInstruction
+		}
 		role := msg.Role
 		if role == "assistant" {
 			role = "model"
@@ -151,9 +246,7 @@ func ConvertToGeminiFormat(messages []Message) []map[string]any {
 					})
 				} else if b.Source.Type == "url" {
 					parts = append(parts, map[string]any{
-						"file_data": map[string]any{
-							"file_uri": b.Source.URL,
-						},
+						"file_data": map[string]any{"file_uri": b.Source.URL},
 					})
 				}
 			}

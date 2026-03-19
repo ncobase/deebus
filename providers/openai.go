@@ -115,6 +115,12 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
 	}
+	if len(req.Tools) > 0 {
+		body["tools"] = req.Tools
+		if req.ToolChoice != "" {
+			body["tool_choice"] = req.ToolChoice
+		}
+	}
 
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -144,6 +150,17 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		defer close(ch)
 		defer resp.Body.Close()
 
+		// Accumulates streaming tool call deltas by index.
+		// The first delta for each index carries id, type, and name;
+		// subsequent deltas carry only argument fragments.
+		type tcAccumulator struct {
+			id        string
+			typ       string
+			name      string
+			arguments strings.Builder
+		}
+		accumulators := map[int]*tcAccumulator{}
+
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -152,18 +169,22 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 			}
 			payload := strings.TrimPrefix(line, "data: ")
 			if payload == "[DONE]" {
-				select {
-				case ch <- &StreamChunk{Done: true}:
-				case <-ctx.Done():
-				}
 				return
 			}
 
 			var chunk struct {
 				Choices []struct {
 					Delta struct {
-						Content   string     `json:"content"`
-						ToolCalls []ToolCall `json:"tool_calls"`
+						Content   string `json:"content"`
+						ToolCalls []struct {
+							Index    int    `json:"index"`
+							ID       string `json:"id"`
+							Type     string `json:"type"`
+							Function struct {
+								Name      string `json:"name"`
+								Arguments string `json:"arguments"`
+							} `json:"function"`
+						} `json:"tool_calls"`
 					} `json:"delta"`
 					FinishReason string `json:"finish_reason"`
 				} `json:"choices"`
@@ -181,22 +202,57 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 				continue
 			}
 
-			sc := &StreamChunk{
-				Content:      chunk.Choices[0].Delta.Content,
-				Done:         chunk.Choices[0].FinishReason != "",
-				FinishReason: chunk.Choices[0].FinishReason,
-			}
-			if len(chunk.Choices[0].Delta.ToolCalls) > 0 {
-				tc := chunk.Choices[0].Delta.ToolCalls[0]
-				sc.ToolCall = &tc
+			choice := chunk.Choices[0]
+
+			// Accumulate tool call fragments.
+			for _, tc := range choice.Delta.ToolCalls {
+				acc, ok := accumulators[tc.Index]
+				if !ok {
+					acc = &tcAccumulator{
+						id:  tc.ID,
+						typ: tc.Type,
+					}
+					accumulators[tc.Index] = acc
+				}
+				if tc.Function.Name != "" {
+					acc.name = tc.Function.Name
+				}
+				acc.arguments.WriteString(tc.Function.Arguments)
 			}
 
-			select {
-			case ch <- sc:
-			case <-ctx.Done():
-				return
+			// Emit text content chunks as they arrive.
+			if choice.Delta.Content != "" {
+				select {
+				case ch <- &StreamChunk{Content: choice.Delta.Content}:
+				case <-ctx.Done():
+					return
+				}
 			}
-			if sc.Done {
+
+			// When finish_reason is set, assemble and emit the final chunk.
+			if choice.FinishReason != "" {
+				final := &StreamChunk{
+					Done:         true,
+					FinishReason: choice.FinishReason,
+				}
+				if len(accumulators) > 0 {
+					toolCalls := make([]ToolCall, 0, len(accumulators))
+					for idx, acc := range accumulators {
+						tc := ToolCall{
+							Index: idx,
+							ID:    acc.id,
+							Type:  acc.typ,
+						}
+						tc.Function.Name = acc.name
+						tc.Function.Arguments = acc.arguments.String()
+						toolCalls = append(toolCalls, tc)
+					}
+					final.ToolCalls = toolCalls
+				}
+				select {
+				case ch <- final:
+				case <-ctx.Done():
+				}
 				return
 			}
 		}

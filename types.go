@@ -16,6 +16,7 @@ type (
 	DocumentContent = providers.DocumentContent
 	DocumentSource  = providers.DocumentSource
 	Tool            = providers.Tool
+	FunctionSchema  = providers.FunctionSchema
 	ToolCall        = providers.ToolCall
 	Request         = providers.Request
 	Response        = providers.Response

@@ -322,21 +322,26 @@ func (c *Client) Health(ctx context.Context) map[string]error {
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 // wrapStream proxies chunks from in to a new channel, recording Stats when
-// the stream ends. It also guards against the consumer stopping mid-stream.
+// the stream ends (success or failure). It also guards against the consumer
+// stopping mid-stream by honouring ctx cancellation on every send.
 func (c *Client) wrapStream(ctx context.Context, in <-chan *StreamChunk) <-chan *StreamChunk {
 	out := make(chan *StreamChunk, 16)
 	go func() {
 		defer close(out)
 		success := true
+		totalTokens := 0
 		for {
 			select {
 			case chunk, ok := <-in:
 				if !ok {
-					c.Stats.RecordRequest(success, 0)
+					c.Stats.RecordRequest(success, totalTokens)
 					return
 				}
 				if chunk.Error != nil {
 					success = false
+				}
+				if chunk.Done && chunk.TokensUsed > 0 {
+					totalTokens = chunk.TokensUsed
 				}
 				select {
 				case out <- chunk:

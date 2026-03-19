@@ -36,6 +36,9 @@ func (p *OllamaProvider) Complete(ctx context.Context, req *Request) (*Response,
 	if req.Options != nil {
 		body["options"] = req.Options
 	}
+	if len(req.Tools) > 0 {
+		body["tools"] = req.Tools // Ollama uses OpenAI-compatible tool format
+	}
 
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -60,9 +63,17 @@ func (p *OllamaProvider) Complete(ctx context.Context, req *Request) (*Response,
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 
+	// Ollama returns arguments as a JSON object; we marshal it back to a string
+	// to match the unified ToolCall.Function.Arguments (JSON-string) format.
 	var result struct {
 		Message struct {
-			Content string `json:"content"`
+			Content   string `json:"content"`
+			ToolCalls []struct {
+				Function struct {
+					Name      string         `json:"name"`
+					Arguments map[string]any `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
 		} `json:"message"`
 		Model      string `json:"model"`
 		DoneReason string `json:"done_reason"`
@@ -73,17 +84,28 @@ func (p *OllamaProvider) Complete(ctx context.Context, req *Request) (*Response,
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
+	var toolCalls []ToolCall
+	for _, otc := range result.Message.ToolCalls {
+		args, _ := json.Marshal(otc.Function.Arguments)
+		tc := ToolCall{Type: "function"}
+		tc.Function.Name = otc.Function.Name
+		tc.Function.Arguments = string(args)
+		toolCalls = append(toolCalls, tc)
+	}
+
 	return &Response{
 		Content:      result.Message.Content,
 		Model:        result.Model,
 		Provider:     p.Name(),
 		TokensUsed:   result.EvalCount,
 		FinishReason: result.DoneReason,
+		ToolCalls:    toolCalls,
 		CreatedAt:    time.Now(),
 	}, nil
 }
 
 // Stream implements streaming via Ollama's NDJSON streaming endpoint.
+// Tool calls, if any, are delivered in the final done chunk.
 func (p *OllamaProvider) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
 	body := map[string]any{
 		"model":    req.Model,
@@ -92,6 +114,9 @@ func (p *OllamaProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 	}
 	if req.Options != nil {
 		body["options"] = req.Options
+	}
+	if len(req.Tools) > 0 {
+		body["tools"] = req.Tools
 	}
 
 	data, err := json.Marshal(body)
@@ -126,10 +151,17 @@ func (p *OllamaProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		for scanner.Scan() {
 			var event struct {
 				Message struct {
-					Content string `json:"content"`
+					Content   string `json:"content"`
+					ToolCalls []struct {
+						Function struct {
+							Name      string         `json:"name"`
+							Arguments map[string]any `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
 				} `json:"message"`
 				Done       bool   `json:"done"`
 				DoneReason string `json:"done_reason"`
+				EvalCount  int    `json:"eval_count"`
 			}
 
 			if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
@@ -145,8 +177,20 @@ func (p *OllamaProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 			}
 
 			if event.Done {
+				final := &StreamChunk{
+					Done:         true,
+					FinishReason: event.DoneReason,
+					TokensUsed:   event.EvalCount,
+				}
+				for _, otc := range event.Message.ToolCalls {
+					args, _ := json.Marshal(otc.Function.Arguments)
+					tc := ToolCall{Type: "function"}
+					tc.Function.Name = otc.Function.Name
+					tc.Function.Arguments = string(args)
+					final.ToolCalls = append(final.ToolCalls, tc)
+				}
 				select {
-				case ch <- &StreamChunk{Done: true, FinishReason: event.DoneReason}:
+				case ch <- final:
 				case <-ctx.Done():
 				}
 				return

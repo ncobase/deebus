@@ -31,20 +31,25 @@ func (p *CohereProvider) Name() string { return "cohere" }
 func (p *CohereProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
 	messages := make([]map[string]any, 0, len(req.Messages))
 	for _, msg := range req.Messages {
-		content := ExtractText(msg.Content)
-		messages = append(messages, map[string]any{"role": msg.Role, "content": content})
+		messages = append(messages, map[string]any{
+			"role":    msg.Role,
+			"content": ExtractText(msg.Content),
+		})
 	}
 
 	body := map[string]any{
 		"model":    req.Model,
 		"messages": messages,
-		"stream":   false,
 	}
 	if req.MaxTokens > 0 {
 		body["max_tokens"] = req.MaxTokens
 	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
+	}
+	if len(req.Tools) > 0 {
+		// Cohere v2 uses standard JSON Schema format — same as our unified Tool type.
+		body["tools"] = req.Tools
 	}
 
 	data, err := json.Marshal(body)
@@ -75,6 +80,15 @@ func (p *CohereProvider) Complete(ctx context.Context, req *Request) (*Response,
 			Content []struct {
 				Text string `json:"text"`
 			} `json:"content"`
+			ToolCalls []struct {
+				ID       string `json:"id"`
+				Type     string `json:"type"`
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"` // JSON-encoded string
+				} `json:"function"`
+			} `json:"tool_calls"`
+			ToolPlan string `json:"tool_plan"`
 		} `json:"message"`
 		Usage struct {
 			Tokens struct {
@@ -94,22 +108,36 @@ func (p *CohereProvider) Complete(ctx context.Context, req *Request) (*Response,
 		content = result.Message.Content[0].Text
 	}
 
+	var toolCalls []ToolCall
+	for _, ctc := range result.Message.ToolCalls {
+		tc := ToolCall{
+			ID:   ctc.ID,
+			Type: ctc.Type,
+		}
+		tc.Function.Name = ctc.Function.Name
+		tc.Function.Arguments = ctc.Function.Arguments
+		toolCalls = append(toolCalls, tc)
+	}
+
 	return &Response{
 		Content:      content,
 		Model:        req.Model,
 		Provider:     p.Name(),
 		TokensUsed:   result.Usage.Tokens.InputTokens + result.Usage.Tokens.OutputTokens,
 		FinishReason: result.FinishReason,
+		ToolCalls:    toolCalls,
 		CreatedAt:    time.Now(),
 	}, nil
 }
 
-// Stream implements streaming via Cohere's SSE endpoint.
+// Stream implements streaming via Cohere's SSE endpoint, including tool-call events.
 func (p *CohereProvider) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
 	messages := make([]map[string]any, 0, len(req.Messages))
 	for _, msg := range req.Messages {
-		content := ExtractText(msg.Content)
-		messages = append(messages, map[string]any{"role": msg.Role, "content": content})
+		messages = append(messages, map[string]any{
+			"role":    msg.Role,
+			"content": ExtractText(msg.Content),
+		})
 	}
 
 	body := map[string]any{
@@ -119,6 +147,12 @@ func (p *CohereProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 	}
 	if req.MaxTokens > 0 {
 		body["max_tokens"] = req.MaxTokens
+	}
+	if req.Temperature > 0 {
+		body["temperature"] = req.Temperature
+	}
+	if len(req.Tools) > 0 {
+		body["tools"] = req.Tools
 	}
 
 	data, err := json.Marshal(body)
@@ -149,6 +183,15 @@ func (p *CohereProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		defer close(ch)
 		defer resp.Body.Close()
 
+		// Accumulates streaming tool-call argument fragments by index.
+		type tcAccumulator struct {
+			id       string
+			typ      string
+			name     string
+			argsBuf  strings.Builder
+		}
+		accumulators := map[int]*tcAccumulator{}
+
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -159,11 +202,26 @@ func (p *CohereProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 
 			var event struct {
 				Type  string `json:"type"`
+				Index int    `json:"index"`
 				Delta struct {
 					Type         string `json:"type"`
 					Text         string `json:"text"`
 					FinishReason string `json:"finish_reason"`
+					ToolCall     struct {
+						ID       string `json:"id"`
+						Type     string `json:"type"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_call"`
 				} `json:"delta"`
+				Usage struct {
+					Tokens struct {
+						InputTokens  int `json:"input_tokens"`
+						OutputTokens int `json:"output_tokens"`
+					} `json:"tokens"`
+				} `json:"usage"`
 			}
 
 			if err := json.Unmarshal([]byte(payload), &event); err != nil {
@@ -179,9 +237,38 @@ func (p *CohereProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 						return
 					}
 				}
+
+			case "tool-call-start":
+				accumulators[event.Index] = &tcAccumulator{
+					id:   event.Delta.ToolCall.ID,
+					typ:  event.Delta.ToolCall.Type,
+					name: event.Delta.ToolCall.Function.Name,
+				}
+
+			case "tool-call-delta":
+				if acc, ok := accumulators[event.Index]; ok {
+					acc.argsBuf.WriteString(event.Delta.ToolCall.Function.Arguments)
+				}
+
 			case "message-end":
+				tokens := event.Usage.Tokens.InputTokens + event.Usage.Tokens.OutputTokens
+				final := &StreamChunk{
+					Done:         true,
+					FinishReason: event.Delta.FinishReason,
+					TokensUsed:   tokens,
+				}
+				for idx, acc := range accumulators {
+					tc := ToolCall{
+						Index: idx,
+						ID:    acc.id,
+						Type:  acc.typ,
+					}
+					tc.Function.Name = acc.name
+					tc.Function.Arguments = acc.argsBuf.String()
+					final.ToolCalls = append(final.ToolCalls, tc)
+				}
 				select {
-				case ch <- &StreamChunk{Done: true, FinishReason: event.Delta.FinishReason}:
+				case ch <- final:
 				case <-ctx.Done():
 				}
 				return
@@ -200,10 +287,15 @@ func (p *CohereProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 }
 
 func (p *CohereProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, error) {
+	inputType := "search_document"
+	if req.InputType != "" {
+		inputType = req.InputType
+	}
+
 	body := map[string]any{
 		"model":      req.Model,
 		"texts":      req.Input,
-		"input_type": "search_document",
+		"input_type": inputType,
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -230,15 +322,21 @@ func (p *CohereProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 
 	var result struct {
 		Embeddings [][]float64 `json:"embeddings"`
+		Model      string      `json:"model"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
+	model := result.Model
+	if model == "" {
+		model = req.Model
+	}
+
 	return &EmbedResponse{
 		Embeddings: result.Embeddings,
-		Model:      req.Model,
+		Model:      model,
 	}, nil
 }
 

@@ -95,7 +95,7 @@ type DocumentSource struct {
 
 // Message is a single turn in a conversation.
 type Message struct {
-	Role    string         `json:"role"`    // "user", "assistant", "system"
+	Role    string         `json:"role"`    // "user", "assistant", "system", "tool"
 	Content []ContentBlock `json:"content"`
 }
 
@@ -110,12 +110,14 @@ type FunctionSchema struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Parameters  map[string]any `json:"parameters"`
+	Strict      bool           `json:"strict,omitempty"` // OpenAI structured outputs
 }
 
 // ToolCall is a model's request to invoke a function.
 type ToolCall struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
+	Index int    `json:"index,omitempty"` // position in parallel tool calls (streaming)
+	ID    string `json:"id"`
+	Type  string `json:"type"`
 	Function struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"` // JSON-encoded arguments
@@ -130,8 +132,8 @@ type Request struct {
 	Temperature float64
 	Stream      bool
 	Tools       []Tool
-	ToolChoice  string
-	Options     map[string]any // provider-specific extras
+	ToolChoice  string         // "auto", "none", "required", or specific function name
+	Options     map[string]any // provider-specific extras (e.g. Ollama parameters)
 }
 
 // Response is the unified non-streaming response.
@@ -148,16 +150,18 @@ type Response struct {
 // StreamChunk is one piece of a streaming response.
 type StreamChunk struct {
 	Content      string
-	ToolCall     *ToolCall
+	ToolCalls    []ToolCall // populated in the final Done chunk when tools were called
 	Done         bool
 	FinishReason string
+	TokensUsed   int   // populated in the final Done chunk when the provider reports it
 	Error        error
 }
 
 // EmbedRequest is the unified embedding request.
 type EmbedRequest struct {
-	Input []string
-	Model string
+	Input     []string
+	Model     string
+	InputType string // hint for retrieval: "search_query", "search_document", "classification", "clustering"
 }
 
 // EmbedResponse is the unified embedding response.
