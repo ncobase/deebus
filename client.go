@@ -220,7 +220,7 @@ func (c *Client) Complete(ctx context.Context, req *Request) (*Response, error) 
 		r.Model = modelName
 		resp, err := p.Complete(ctx, &r)
 		if err == nil {
-			c.Stats.RecordRequest(true, resp.TokensUsed)
+			c.Stats.RecordRequest(true, resp.InputTokens, resp.OutputTokens)
 			return resp, nil
 		}
 
@@ -230,7 +230,7 @@ func (c *Client) Complete(ctx context.Context, req *Request) (*Response, error) 
 		}
 	}
 
-	c.Stats.RecordRequest(false, 0)
+	c.Stats.RecordRequest(false, 0, 0)
 	return nil, fmt.Errorf("all providers failed: %w", lastErr)
 }
 
@@ -266,7 +266,7 @@ func (c *Client) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk,
 		}
 	}
 
-	c.Stats.RecordRequest(false, 0)
+	c.Stats.RecordRequest(false, 0, 0)
 	return nil, fmt.Errorf("all providers failed for streaming: %w", lastErr)
 }
 
@@ -329,28 +329,29 @@ func (c *Client) wrapStream(ctx context.Context, in <-chan *StreamChunk) <-chan 
 	go func() {
 		defer close(out)
 		success := true
-		totalTokens := 0
+		var inputTokens, outputTokens int
 		for {
 			select {
 			case chunk, ok := <-in:
 				if !ok {
-					c.Stats.RecordRequest(success, totalTokens)
+					c.Stats.RecordRequest(success, inputTokens, outputTokens)
 					return
 				}
 				if chunk.Error != nil {
 					success = false
 				}
-				if chunk.Done && chunk.TokensUsed > 0 {
-					totalTokens = chunk.TokensUsed
+				if chunk.Done {
+					inputTokens = chunk.InputTokens
+					outputTokens = chunk.OutputTokens
 				}
 				select {
 				case out <- chunk:
 				case <-ctx.Done():
-					c.Stats.RecordRequest(false, 0)
+					c.Stats.RecordRequest(false, 0, 0)
 					return
 				}
 			case <-ctx.Done():
-				c.Stats.RecordRequest(false, 0)
+				c.Stats.RecordRequest(false, 0, 0)
 				return
 			}
 		}

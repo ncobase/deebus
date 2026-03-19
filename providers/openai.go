@@ -82,8 +82,10 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
-			TotalTokens          int `json:"total_tokens"`
-			PromptTokensDetails  struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+			PromptTokensDetails struct {
 				CachedTokens int `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
@@ -102,6 +104,8 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 		Content:      result.Choices[0].Message.Content,
 		Model:        result.Model,
 		Provider:     p.Name(),
+		InputTokens:  result.Usage.PromptTokens,
+		OutputTokens: result.Usage.CompletionTokens,
 		TokensUsed:   result.Usage.TotalTokens,
 		FinishReason: result.Choices[0].FinishReason,
 		ToolCalls:    result.Choices[0].Message.ToolCalls,
@@ -212,7 +216,9 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 				} `json:"choices"`
 				// Usage chunk emitted by stream_options.include_usage=true.
 				Usage *struct {
-					TotalTokens         int `json:"total_tokens"`
+					PromptTokens     int `json:"prompt_tokens"`
+					CompletionTokens int `json:"completion_tokens"`
+					TotalTokens      int `json:"total_tokens"`
 					PromptTokensDetails struct {
 						CachedTokens int `json:"cached_tokens"`
 					} `json:"prompt_tokens_details"`
@@ -229,6 +235,8 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 
 			// Usage-only chunk (choices is empty): patch and emit the pending final.
 			if len(chunk.Choices) == 0 && chunk.Usage != nil && pending != nil {
+				pending.InputTokens = chunk.Usage.PromptTokens
+				pending.OutputTokens = chunk.Usage.CompletionTokens
 				pending.TokensUsed = chunk.Usage.TotalTokens
 				pending.CacheUsage = CacheUsage{
 					ReadTokens: chunk.Usage.PromptTokensDetails.CachedTokens,

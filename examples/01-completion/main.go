@@ -129,10 +129,10 @@ func healthCheck(ctx context.Context, client *deebus.Client) {
 
 // printStats shows aggregate request and token counters.
 func printStats(client *deebus.Client) {
-	total, tokens, success, failed := client.Stats.Get()
+	total, input, output, success, failed := client.Stats.Get()
 	fmt.Printf("── Stats ────────────────────────────────────────────────────────────\n")
-	fmt.Printf("  requests=%d  tokens=%d  success=%d  failed=%d\n",
-		total, tokens, success, failed)
+	fmt.Printf("  requests=%d  input=%d  output=%d  total=%d  success=%d  failed=%d\n",
+		total, input, output, input+output, success, failed)
 }
 
 // ── Logger bridge ─────────────────────────────────────────────────────────────

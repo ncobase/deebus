@@ -75,9 +75,10 @@ func (p *OllamaProvider) Complete(ctx context.Context, req *Request) (*Response,
 				} `json:"function"`
 			} `json:"tool_calls"`
 		} `json:"message"`
-		Model      string `json:"model"`
-		DoneReason string `json:"done_reason"`
-		EvalCount  int    `json:"eval_count"`
+		Model           string `json:"model"`
+		DoneReason      string `json:"done_reason"`
+		PromptEvalCount int    `json:"prompt_eval_count"`
+		EvalCount       int    `json:"eval_count"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -97,7 +98,9 @@ func (p *OllamaProvider) Complete(ctx context.Context, req *Request) (*Response,
 		Content:      result.Message.Content,
 		Model:        result.Model,
 		Provider:     p.Name(),
-		TokensUsed:   result.EvalCount,
+		InputTokens:  result.PromptEvalCount,
+		OutputTokens: result.EvalCount,
+		TokensUsed:   result.PromptEvalCount + result.EvalCount,
 		FinishReason: result.DoneReason,
 		ToolCalls:    toolCalls,
 		CreatedAt:    time.Now(),
@@ -159,8 +162,9 @@ func (p *OllamaProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 						} `json:"function"`
 					} `json:"tool_calls"`
 				} `json:"message"`
-				Done       bool   `json:"done"`
-				DoneReason string `json:"done_reason"`
+				Done            bool   `json:"done"`
+				DoneReason      string `json:"done_reason"`
+				PromptEvalCount int    `json:"prompt_eval_count"`
 				EvalCount  int    `json:"eval_count"`
 			}
 
@@ -180,7 +184,9 @@ func (p *OllamaProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 				final := &StreamChunk{
 					Done:         true,
 					FinishReason: event.DoneReason,
-					TokensUsed:   event.EvalCount,
+					InputTokens:  event.PromptEvalCount,
+					OutputTokens: event.EvalCount,
+					TokensUsed:   event.PromptEvalCount + event.EvalCount,
 				}
 				for _, otc := range event.Message.ToolCalls {
 					args, _ := json.Marshal(otc.Function.Arguments)

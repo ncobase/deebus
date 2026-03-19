@@ -143,6 +143,8 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 		Content:      content,
 		Model:        result.Model,
 		Provider:     p.Name(),
+		InputTokens:  result.Usage.InputTokens,
+		OutputTokens: result.Usage.OutputTokens,
 		TokensUsed:   result.Usage.InputTokens + result.Usage.OutputTokens,
 		FinishReason: result.StopReason,
 		ToolCalls:    toolCalls,
@@ -335,6 +337,8 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 				final := &StreamChunk{
 					Done:         true,
 					FinishReason: stopReason,
+					InputTokens:  inputTokens,
+					OutputTokens: outputTokens,
 					TokensUsed:   inputTokens + outputTokens,
 					ToolCalls:    toolCalls,
 					CacheUsage: CacheUsage{

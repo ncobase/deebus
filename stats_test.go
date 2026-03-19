@@ -4,29 +4,29 @@ import "testing"
 
 func TestStats(t *testing.T) {
 	s := &Stats{}
-	
-	// Record success
-	s.RecordRequest(true, 100)
-	s.RecordRequest(true, 200)
-	
-	// Record failure
-	s.RecordRequest(false, 0)
-	
-	total, tokens, success, failed := s.Get()
-	
+
+	s.RecordRequest(true, 80, 20)  // 100 total
+	s.RecordRequest(true, 150, 50) // 200 total
+	s.RecordRequest(false, 0, 0)
+
+	total, input, output, success, failed := s.Get()
+
 	if total != 3 {
-		t.Errorf("expected 3 total requests, got %d", total)
+		t.Errorf("total: got %d, want 3", total)
 	}
-	
-	if tokens != 300 {
-		t.Errorf("expected 300 tokens, got %d", tokens)
+	if input != 230 {
+		t.Errorf("inputTokens: got %d, want 230", input)
 	}
-	
+	if output != 70 {
+		t.Errorf("outputTokens: got %d, want 70", output)
+	}
+	if input+output != 300 {
+		t.Errorf("total tokens: got %d, want 300", input+output)
+	}
 	if success != 2 {
-		t.Errorf("expected 2 success, got %d", success)
+		t.Errorf("success: got %d, want 2", success)
 	}
-	
 	if failed != 1 {
-		t.Errorf("expected 1 failed, got %d", failed)
+		t.Errorf("failed: got %d, want 1", failed)
 	}
 }

@@ -97,7 +97,9 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 			FinishReason string `json:"finishReason"`
 		} `json:"candidates"`
 		UsageMetadata struct {
-			TotalTokenCount int `json:"totalTokenCount"`
+			PromptTokenCount     int `json:"promptTokenCount"`
+			CandidatesTokenCount int `json:"candidatesTokenCount"`
+			TotalTokenCount      int `json:"totalTokenCount"`
 		} `json:"usageMetadata"`
 	}
 
@@ -134,6 +136,8 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 		Content:      content,
 		Model:        req.Model,
 		Provider:     p.Name(),
+		InputTokens:  result.UsageMetadata.PromptTokenCount,
+		OutputTokens: result.UsageMetadata.CandidatesTokenCount,
 		TokensUsed:   result.UsageMetadata.TotalTokenCount,
 		FinishReason: cand.FinishReason,
 		ToolCalls:    toolCalls,
@@ -202,7 +206,7 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		defer close(ch)
 		defer resp.Body.Close()
 
-		var totalTokens int
+		var inputTokens, outputTokens, totalTokens int
 
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
@@ -226,7 +230,9 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 					FinishReason string `json:"finishReason"`
 				} `json:"candidates"`
 				UsageMetadata struct {
-					TotalTokenCount int `json:"totalTokenCount"`
+					PromptTokenCount     int `json:"promptTokenCount"`
+					CandidatesTokenCount int `json:"candidatesTokenCount"`
+					TotalTokenCount      int `json:"totalTokenCount"`
 				} `json:"usageMetadata"`
 			}
 
@@ -235,6 +241,8 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 			}
 
 			if event.UsageMetadata.TotalTokenCount > 0 {
+				inputTokens = event.UsageMetadata.PromptTokenCount
+				outputTokens = event.UsageMetadata.CandidatesTokenCount
 				totalTokens = event.UsageMetadata.TotalTokenCount
 			}
 
@@ -267,6 +275,8 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 				case ch <- &StreamChunk{
 					Done:         true,
 					FinishReason: cand.FinishReason,
+					InputTokens:  inputTokens,
+					OutputTokens: outputTokens,
 					TokensUsed:   totalTokens,
 					ToolCalls:    toolCalls,
 				}:

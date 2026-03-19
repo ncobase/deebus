@@ -117,6 +117,8 @@ func (p *CohereProvider) Complete(ctx context.Context, req *Request) (*Response,
 		Content:      content,
 		Model:        req.Model,
 		Provider:     p.Name(),
+		InputTokens:  result.Usage.Tokens.InputTokens,
+		OutputTokens: result.Usage.Tokens.OutputTokens,
 		TokensUsed:   result.Usage.Tokens.InputTokens + result.Usage.Tokens.OutputTokens,
 		FinishReason: result.FinishReason,
 		ToolCalls:    toolCalls,
@@ -239,11 +241,12 @@ func (p *CohereProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 				}
 
 			case "message-end":
-				tokens := event.Usage.Tokens.InputTokens + event.Usage.Tokens.OutputTokens
 				final := &StreamChunk{
 					Done:         true,
 					FinishReason: event.Delta.FinishReason,
-					TokensUsed:   tokens,
+					InputTokens:  event.Usage.Tokens.InputTokens,
+					OutputTokens: event.Usage.Tokens.OutputTokens,
+					TokensUsed:   event.Usage.Tokens.InputTokens + event.Usage.Tokens.OutputTokens,
 				}
 				for idx, acc := range accumulators {
 					tc := ToolCall{

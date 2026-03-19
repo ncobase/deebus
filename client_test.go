@@ -181,7 +181,7 @@ func TestStatsRecording(t *testing.T) {
 	defer cancel()
 	c.Complete(ctx, &Request{Messages: []Message{TextMessage("user", "ping")}}) //nolint:errcheck
 
-	total, _, _, _ := c.Stats.Get()
+	total, _, _, _, _ := c.Stats.Get()
 	if total == 0 {
 		t.Error("Stats.TotalRequests should have been incremented")
 	}
@@ -216,7 +216,7 @@ func TestClientConcurrency(t *testing.T) {
 
 	wg.Wait()
 
-	total, _, _, _ := c.Stats.Get()
+	total, _, _, _, _ := c.Stats.Get()
 	if total != workers {
 		t.Errorf("expected %d total requests, got %d", workers, total)
 	}
@@ -272,7 +272,7 @@ func TestStreamStatsRecordedOnFailure(t *testing.T) {
 	defer cancel()
 	c.Stream(ctx, &Request{Messages: []Message{TextMessage("user", "hi")}}) //nolint:errcheck
 
-	total, _, _, _ := c.Stats.Get()
+	total, _, _, _, _ := c.Stats.Get()
 	if total == 0 {
 		t.Error("Stats must be incremented even when Stream returns an error")
 	}
