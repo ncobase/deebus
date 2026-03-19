@@ -97,9 +97,10 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 			FinishReason string `json:"finishReason"`
 		} `json:"candidates"`
 		UsageMetadata struct {
-			PromptTokenCount     int `json:"promptTokenCount"`
-			CandidatesTokenCount int `json:"candidatesTokenCount"`
-			TotalTokenCount      int `json:"totalTokenCount"`
+			PromptTokenCount          int `json:"promptTokenCount"`
+			CandidatesTokenCount      int `json:"candidatesTokenCount"`
+			TotalTokenCount           int `json:"totalTokenCount"`
+			CachedContentTokenCount   int `json:"cachedContentTokenCount"` // Gemini context caching
 		} `json:"usageMetadata"`
 	}
 
@@ -141,6 +142,7 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 		TokensUsed:   result.UsageMetadata.TotalTokenCount,
 		FinishReason: cand.FinishReason,
 		ToolCalls:    toolCalls,
+		CacheUsage:   CacheUsage{ReadTokens: result.UsageMetadata.CachedContentTokenCount},
 		CreatedAt:    time.Now(),
 	}, nil
 }
@@ -206,7 +208,7 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		defer close(ch)
 		defer resp.Body.Close()
 
-		var inputTokens, outputTokens, totalTokens int
+		var inputTokens, outputTokens, totalTokens, cacheRead int
 
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
@@ -232,7 +234,8 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 				UsageMetadata struct {
 					PromptTokenCount     int `json:"promptTokenCount"`
 					CandidatesTokenCount int `json:"candidatesTokenCount"`
-					TotalTokenCount      int `json:"totalTokenCount"`
+					TotalTokenCount         int `json:"totalTokenCount"`
+					CachedContentTokenCount int `json:"cachedContentTokenCount"`
 				} `json:"usageMetadata"`
 			}
 
@@ -244,6 +247,7 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 				inputTokens = event.UsageMetadata.PromptTokenCount
 				outputTokens = event.UsageMetadata.CandidatesTokenCount
 				totalTokens = event.UsageMetadata.TotalTokenCount
+				cacheRead = event.UsageMetadata.CachedContentTokenCount
 			}
 
 			if len(event.Candidates) == 0 {
@@ -279,6 +283,7 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 					OutputTokens: outputTokens,
 					TokensUsed:   totalTokens,
 					ToolCalls:    toolCalls,
+					CacheUsage:   CacheUsage{ReadTokens: cacheRead},
 				}:
 				case <-ctx.Done():
 				}

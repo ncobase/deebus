@@ -220,7 +220,8 @@ func (c *Client) Complete(ctx context.Context, req *Request) (*Response, error) 
 		r.Model = modelName
 		resp, err := p.Complete(ctx, &r)
 		if err == nil {
-			c.Stats.RecordRequest(true, resp.InputTokens, resp.OutputTokens)
+			c.Stats.RecordRequest(true, resp.InputTokens, resp.OutputTokens,
+				resp.CacheUsage.CreatedTokens, resp.CacheUsage.ReadTokens)
 			return resp, nil
 		}
 
@@ -230,7 +231,7 @@ func (c *Client) Complete(ctx context.Context, req *Request) (*Response, error) 
 		}
 	}
 
-	c.Stats.RecordRequest(false, 0, 0)
+	c.Stats.RecordRequest(false, 0, 0, 0, 0)
 	return nil, fmt.Errorf("all providers failed: %w", lastErr)
 }
 
@@ -266,7 +267,7 @@ func (c *Client) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk,
 		}
 	}
 
-	c.Stats.RecordRequest(false, 0, 0)
+	c.Stats.RecordRequest(false, 0, 0, 0, 0)
 	return nil, fmt.Errorf("all providers failed for streaming: %w", lastErr)
 }
 
@@ -329,12 +330,12 @@ func (c *Client) wrapStream(ctx context.Context, in <-chan *StreamChunk) <-chan 
 	go func() {
 		defer close(out)
 		success := true
-		var inputTokens, outputTokens int
+		var inputTokens, outputTokens, cacheCreated, cacheRead int
 		for {
 			select {
 			case chunk, ok := <-in:
 				if !ok {
-					c.Stats.RecordRequest(success, inputTokens, outputTokens)
+					c.Stats.RecordRequest(success, inputTokens, outputTokens, cacheCreated, cacheRead)
 					return
 				}
 				if chunk.Error != nil {
@@ -343,15 +344,17 @@ func (c *Client) wrapStream(ctx context.Context, in <-chan *StreamChunk) <-chan 
 				if chunk.Done {
 					inputTokens = chunk.InputTokens
 					outputTokens = chunk.OutputTokens
+					cacheCreated = chunk.CacheUsage.CreatedTokens
+					cacheRead = chunk.CacheUsage.ReadTokens
 				}
 				select {
 				case out <- chunk:
 				case <-ctx.Done():
-					c.Stats.RecordRequest(false, 0, 0)
+					c.Stats.RecordRequest(false, 0, 0, 0, 0)
 					return
 				}
 			case <-ctx.Done():
-				c.Stats.RecordRequest(false, 0, 0)
+				c.Stats.RecordRequest(false, 0, 0, 0, 0)
 				return
 			}
 		}

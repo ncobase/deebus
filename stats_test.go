@@ -5,9 +5,9 @@ import "testing"
 func TestStats(t *testing.T) {
 	s := &Stats{}
 
-	s.RecordRequest(true, 80, 20)  // 100 total
-	s.RecordRequest(true, 150, 50) // 200 total
-	s.RecordRequest(false, 0, 0)
+	s.RecordRequest(true, 80, 20, 0, 50)   // 100 total, 50 cache read
+	s.RecordRequest(true, 150, 50, 200, 0) // 200 total, 200 cache created
+	s.RecordRequest(false, 0, 0, 0, 0)
 
 	total, input, output, success, failed := s.Get()
 
@@ -28,5 +28,11 @@ func TestStats(t *testing.T) {
 	}
 	if failed != 1 {
 		t.Errorf("failed: got %d, want 1", failed)
+	}
+	if s.CacheCreatedTokens.Load() != 200 {
+		t.Errorf("cacheCreated: got %d, want 200", s.CacheCreatedTokens.Load())
+	}
+	if s.CacheReadTokens.Load() != 50 {
+		t.Errorf("cacheRead: got %d, want 50", s.CacheReadTokens.Load())
 	}
 }
