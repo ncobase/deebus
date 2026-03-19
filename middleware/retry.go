@@ -110,6 +110,9 @@ func (m *RetryMiddleware) backoff(attempt int, hint time.Duration) time.Duration
 	}
 	half := cap / 2
 	// Equal jitter: deterministic half + random half
+	if half <= 0 {
+		return cap
+	}
 	return half + time.Duration(rand.Int63n(int64(half)+1))
 }
 
