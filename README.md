@@ -533,9 +533,16 @@ github.com/ncobase/deebus
 │   ├── ratelimit.go   RateLimitMiddleware (continuous token bucket)
 │   └── circuit.go     CircuitBreakerMiddleware
 │
-└── internal/
-    ├── circuit/       Circuit breaker state machine (Closed → Open → Half-open)
-    └── log/           Shared Logger interface (avoids circular imports)
+├── internal/
+│   ├── circuit/       Circuit breaker state machine (Closed → Open → Half-open)
+│   └── log/           Shared Logger interface (avoids circular imports)
+│
+└── examples/
+    ├── 01-completion/ Basic completion, streaming, logging, health check
+    ├── 02-tools/      Single-turn and multi-turn tool calling (manual history)
+    ├── 03-agent/      RunAgent, RunAgentStream, hooks, history trimming
+    ├── 04-embeddings/ Embedding generation and semantic search
+    └── 05-mcp/        MCP stdio and HTTP transports, agent integration
 ```
 
 ---
