@@ -95,15 +95,13 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 		Model string `json:"model"`
 	}
 
-	// Buffer the body so we can retry as SSE if JSON decode fails.
 	rawBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
 	if err := json.Unmarshal(rawBody, &result); err != nil {
-		// Some proxies always return SSE (streaming) regardless of the
-		// stream flag. Fall back to SSE parsing if the body looks like it.
+		// Fall back to SSE parsing when the endpoint returns streaming format.
 		if strings.HasPrefix(strings.TrimSpace(string(rawBody)), "data:") {
 			return p.completeFromSSE(ctx, req, rawBody)
 		}
@@ -129,9 +127,8 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 	}, nil
 }
 
-// completeFromSSE handles the case where a proxy returns SSE even for a
-// non-streaming request. It consumes all chunks and returns a synthesised
-// Response matching the non-streaming contract.
+// completeFromSSE consumes an SSE body (returned by some endpoints even for
+// non-streaming requests) and synthesises a Response from the aggregated chunks.
 func (p *OpenAIProvider) completeFromSSE(ctx context.Context, req *Request, body []byte) (*Response, error) {
 	ch := p.parseSSEStream(ctx, bytes.NewReader(body))
 
@@ -280,7 +277,6 @@ func (p *OpenAIProvider) parseSSEStream(ctx context.Context, r io.Reader) <-chan
 					FinishReason string `json:"finish_reason"`
 				} `json:"choices"`
 				// Usage chunk emitted by stream_options.include_usage=true.
-				// Usage chunk emitted by stream_options.include_usage=true.
 				Usage *struct {
 					PromptTokens     int `json:"prompt_tokens"`
 					CompletionTokens int `json:"completion_tokens"`
@@ -351,9 +347,8 @@ func (p *OpenAIProvider) parseSSEStream(ctx context.Context, r io.Reader) <-chan
 			}
 
 			// When finish_reason is set, build the final chunk.
-			// If usage is present in the same chunk (some proxies omit the
-			// separate usage-only chunk), populate and emit immediately.
-			// Otherwise hold pending for the next usage-only chunk or [DONE].
+			// If usage is present in the same chunk, populate and emit
+			// immediately; otherwise hold pending for the next chunk or [DONE].
 			if choice.FinishReason != "" {
 				pending = &StreamChunk{
 					Done:         true,
@@ -390,8 +385,7 @@ func (p *OpenAIProvider) parseSSEStream(ctx context.Context, r io.Reader) <-chan
 			}
 		}
 
-		// Emit any pending final chunk when the stream closes without a
-		// [DONE] marker (some proxies omit it).
+		// Emit any pending final chunk if the stream closed before [DONE].
 		if pending != nil {
 			select {
 			case ch <- pending:

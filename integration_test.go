@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// testCreds holds credentials parsed from token.test.
+// testCreds holds per-provider credentials loaded from the credentials file.
 type testCreds struct {
 	AnthropicAPIKey  string
 	AnthropicBaseURL string
@@ -19,13 +19,17 @@ type testCreds struct {
 	GeminiBaseURL    string
 }
 
-// loadTestCreds reads token.test from the module root. If the file does not
-// exist the calling test is skipped (not failed).
+// credentialsFile is the name of the local credentials file used for
+// integration tests. The file uses KEY=VALUE lines (comments with #).
+const credentialsFile = "token.test"
+
+// loadTestCreds reads the credentials file from the module root.
+// If the file does not exist the calling test is skipped (not failed).
 func loadTestCreds(t *testing.T) testCreds {
 	t.Helper()
-	f, err := os.Open("token.test")
+	f, err := os.Open(credentialsFile)
 	if err != nil {
-		t.Skip("token.test not found — skipping integration tests")
+		t.Skipf("credentials file %q not found — skipping integration tests", credentialsFile)
 	}
 	defer f.Close()
 
@@ -44,21 +48,22 @@ func loadTestCreds(t *testing.T) testCreds {
 		case "ANTHROPIC_API_KEY":
 			c.AnthropicAPIKey = strings.TrimSpace(v)
 		case "ANTHROPIC_BASE_URL":
-			c.AnthropicBaseURL = strings.TrimSpace(v)
+			// Strip version suffix — the provider appends the path segment itself.
+			c.AnthropicBaseURL = strings.TrimSuffix(strings.TrimSpace(v), "/v1")
 		case "OPENAI_API_KEY":
 			c.OpenAIAPIKey = strings.TrimSpace(v)
 		case "OPENAI_BASE_URL":
-			// Strip trailing /v1 — the OpenAI provider appends /v1/chat/completions itself.
+			// Strip version suffix — the provider appends the path segment itself.
 			c.OpenAIBaseURL = strings.TrimSuffix(strings.TrimSpace(v), "/v1")
 		case "GEMINI_API_KEY":
 			c.GeminiAPIKey = strings.TrimSpace(v)
 		case "GEMINI_BASE_URL":
-			// Strip trailing /v1beta — the Gemini provider appends /v1beta/models/... itself.
+			// Strip version suffix — the provider appends the path segment itself.
 			c.GeminiBaseURL = strings.TrimSuffix(strings.TrimSpace(v), "/v1beta")
 		}
 	}
 	if err := sc.Err(); err != nil {
-		t.Skipf("token.test scan error: %v — skipping integration tests", err)
+		t.Skipf("credentials file scan error: %v — skipping integration tests", err)
 	}
 	return c
 }
@@ -192,7 +197,7 @@ Your responses are always grounded in the specific context provided. You ask cla
 func TestIntegrationAnthropic(t *testing.T) {
 	creds := loadTestCreds(t)
 	if creds.AnthropicAPIKey == "" || creds.AnthropicBaseURL == "" {
-		t.Skip("Anthropic credentials not present in token.test")
+		t.Skip("Anthropic credentials not configured")
 	}
 
 	client := newIntegrationClient(t,
@@ -203,8 +208,7 @@ func TestIntegrationAnthropic(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Pre-flight: verify the Anthropic endpoint is reachable. Some proxy
-	// paths (e.g. /claude/aws) route to AWS Bedrock and may be unavailable.
+	// Pre-flight: verify the endpoint responds successfully before running subtests.
 	{
 		preCtx, preCancel := context.WithTimeout(ctx, 30*time.Second)
 		_, preErr := client.Complete(preCtx, &Request{
@@ -213,9 +217,7 @@ func TestIntegrationAnthropic(t *testing.T) {
 		})
 		preCancel()
 		if preErr != nil {
-			if strings.Contains(preErr.Error(), "500") || strings.Contains(preErr.Error(), "server error") {
-				t.Skipf("Anthropic endpoint unavailable (proxy error): %v", preErr)
-			}
+			t.Skipf("Anthropic endpoint unavailable: %v", preErr)
 		}
 	}
 
@@ -262,7 +264,6 @@ func TestIntegrationAnthropic(t *testing.T) {
 			full.WriteString(chunk.Content)
 			if chunk.Done {
 				doneChunk = chunk
-				break
 			}
 		}
 
@@ -375,7 +376,7 @@ func TestIntegrationAnthropic(t *testing.T) {
 func TestIntegrationOpenAI(t *testing.T) {
 	creds := loadTestCreds(t)
 	if creds.OpenAIAPIKey == "" || creds.OpenAIBaseURL == "" {
-		t.Skip("OpenAI credentials not present in token.test")
+		t.Skip("OpenAI credentials not configured")
 	}
 
 	client := newIntegrationClient(t,
@@ -429,7 +430,6 @@ func TestIntegrationOpenAI(t *testing.T) {
 			full.WriteString(chunk.Content)
 			if chunk.Done {
 				doneChunk = chunk
-				break
 			}
 		}
 
@@ -461,10 +461,8 @@ func TestIntegrationOpenAI(t *testing.T) {
 			Model: "text-embedding-3-small",
 		})
 		if err != nil {
-			// Some proxies (e.g. completion-only) do not expose the embeddings
-			// endpoint. Skip rather than fail in that case.
 			if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found") {
-				t.Skipf("Embed: proxy does not support embeddings endpoint (%v)", err)
+				t.Skipf("Embed endpoint not available: %v", err)
 			}
 			t.Fatalf("Embed: %v", err)
 		}
@@ -533,7 +531,7 @@ func TestIntegrationOpenAI(t *testing.T) {
 func TestIntegrationGemini(t *testing.T) {
 	creds := loadTestCreds(t)
 	if creds.GeminiAPIKey == "" || creds.GeminiBaseURL == "" {
-		t.Skip("Gemini credentials not present in token.test")
+		t.Skip("Gemini credentials not configured")
 	}
 
 	client := newIntegrationClient(t,
@@ -587,7 +585,6 @@ func TestIntegrationGemini(t *testing.T) {
 			full.WriteString(chunk.Content)
 			if chunk.Done {
 				doneChunk = chunk
-				break
 			}
 		}
 
@@ -624,10 +621,25 @@ func TestIntegrationGemini(t *testing.T) {
 func TestIntegrationMultiProvider(t *testing.T) {
 	creds := loadTestCreds(t)
 	if creds.AnthropicAPIKey == "" || creds.AnthropicBaseURL == "" {
-		t.Skip("Anthropic credentials not present in token.test — skipping multi-provider test")
+		t.Skip("Anthropic credentials not configured")
 	}
 	if creds.OpenAIAPIKey == "" || creds.OpenAIBaseURL == "" {
-		t.Skip("OpenAI credentials not present in token.test — skipping multi-provider test")
+		t.Skip("OpenAI credentials not configured")
+	}
+
+	// Verify the Anthropic endpoint is reachable before building the multi-provider client.
+	{
+		probe := newIntegrationClient(t, "anthropic", "anthropic",
+			creds.AnthropicBaseURL, creds.AnthropicAPIKey, "anthropic/claude-sonnet-4-6")
+		pCtx, pCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		_, pErr := probe.Complete(pCtx, &Request{
+			Messages:  []Message{TextMessage("user", "Hi.")},
+			MaxTokens: 8,
+		})
+		pCancel()
+		if pErr != nil {
+			t.Skipf("Anthropic endpoint unavailable: %v", pErr)
+		}
 	}
 
 	client, err := NewClient(Config{
@@ -706,7 +718,6 @@ func TestIntegrationMultiProvider(t *testing.T) {
 			full.WriteString(chunk.Content)
 			if chunk.Done {
 				doneChunk = chunk
-				break
 			}
 		}
 

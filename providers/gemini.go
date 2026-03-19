@@ -372,20 +372,15 @@ func (p *GeminiProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 
 func (p *GeminiProvider) Health(_ context.Context) error { return nil }
 
-// setHeaders sets common headers on a Gemini HTTP request.
-// Authorization: Bearer is sent for proxy compatibility.
-// The native Google API authenticates via the ?key= URL parameter (see
-// geminiURL) and ignores the Bearer header.
 func (p *GeminiProvider) setHeaders(r *http.Request) {
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
 }
 
-// geminiURL builds a Gemini endpoint URL. When BaseURL targets the native
-// Google API (googleapis.com), the API key is appended as ?key=[,extra]. For
-// any other base URL (proxy), the key is omitted and only the extra query
-// string (if any) is added; auth is via Authorization: Bearer header only,
-// because proxies reject the ?key= parameter.
+// geminiURL builds an endpoint URL for the Gemini provider.
+// For the native Google API (googleapis.com) the key is passed as a query
+// parameter (?key=); for all other base URLs the key is omitted from the URL
+// and authentication relies on the Authorization: Bearer header instead.
 func (p *GeminiProvider) geminiURL(path, extraQuery string) string {
 	base := p.cfg.BaseURL + path
 	if strings.Contains(p.cfg.BaseURL, "googleapis.com") {
