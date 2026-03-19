@@ -26,7 +26,7 @@
 | **Multimodal** | Text, images (URL / base64), audio, PDF documents |
 | **Embeddings** | OpenAI, Gemini, Ollama, Cohere |
 | **Structured logging** | Pluggable `Logger` interface; defaults to no-op |
-| **Usage statistics** | Atomic request / token counters via `client.Stats` |
+| **Usage statistics** | Per-request input/output/cache token counters; ReasoningTokens for o-series/thinking models; aggregate Stats with cache hit/write totals |
 | **Zero dependencies** | Only `gopkg.in/yaml.v3` for config parsing |
 | **Thread-safe** | All public methods are safe for concurrent use |
 
@@ -154,13 +154,13 @@ client, err := deebus.NewClient(deebus.Config{
 
 ## Provider Compatibility
 
-| Provider | Complete | Stream | Embed | Tool Calling | Multimodal |
-|----------|:--------:|:------:|:-----:|:------------:|:----------:|
-| **OpenAI** | ✓ | ✓ SSE | ✓ | ✓ | Image, Audio |
-| **Anthropic** | ✓ | ✓ SSE | — | ✓ | Image, PDF |
-| **Gemini** | ✓ | ✓ SSE | ✓ | ✓ | Image |
-| **Ollama** | ✓ | ✓ NDJSON | ✓ | ✓ | — |
-| **Cohere** | ✓ | ✓ SSE | ✓ | ✓ | — |
+| Provider | Complete | Stream | Embed | Tool Calling | Multimodal | Caching |
+|----------|:--------:|:------:|:-----:|:------------:|:----------:|:-------:|
+| **OpenAI** | ✓ | ✓ SSE | ✓ | ✓ | Image, Audio | Auto (≥1024 tokens) |
+| **Anthropic** | ✓ | ✓ SSE | — | ✓ | Image, PDF | Explicit `cache_control` |
+| **Gemini** | ✓ | ✓ SSE | ✓ | ✓ | Image | Context cache (`cachedContentTokenCount`) |
+| **Ollama** | ✓ | ✓ NDJSON | ✓ | ✓ | — | — |
+| **Cohere** | ✓ | ✓ SSE | ✓ | ✓ | — | — |
 
 ---
 
@@ -510,10 +510,25 @@ if resp.CacheUsage.ReadTokens > 0 {
 
 ### CacheUsage fields
 
-| Field | Anthropic | OpenAI |
-|-------|-----------|--------|
-| `CreatedTokens` | `cache_creation_input_tokens` | — |
-| `ReadTokens` | `cache_read_input_tokens` | `prompt_tokens_details.cached_tokens` |
+| Field | Anthropic | OpenAI | Gemini |
+|-------|-----------|--------|--------|
+| `CreatedTokens` | `cache_creation_input_tokens` | — | — |
+| `ReadTokens` | `cache_read_input_tokens` | `prompt_tokens_details.cached_tokens` | `cachedContentTokenCount` |
+
+---
+
+## Token Breakdown
+
+All token counts are real server-reported values — never client-side estimates.
+
+| Field | Description |
+|-------|-------------|
+| `InputTokens` | True total input tokens. For Anthropic this is `input_tokens + cache_read + cache_creation`; for other providers it matches the API total. |
+| `OutputTokens` | Total output tokens, including reasoning/thinking tokens where applicable. |
+| `TokensUsed` | `InputTokens + OutputTokens`. |
+| `ReasoningTokens` | Subset of `OutputTokens` used for internal reasoning. Populated for OpenAI o-series (`completion_tokens_details.reasoning_tokens`) and Gemini thinking models (`thoughtsTokenCount`). Zero for all other models. |
+| `CacheUsage.CreatedTokens` | Tokens written to the prompt cache this request (Anthropic only). |
+| `CacheUsage.ReadTokens` | Tokens served from cache: Anthropic `cache_read_input_tokens`, OpenAI `prompt_tokens_details.cached_tokens`, Gemini `cachedContentTokenCount`. |
 
 ---
 
@@ -539,9 +554,14 @@ client.SetLogger(SlogAdapter{})
 ## Usage Statistics
 
 ```go
-total, tokens, success, failed := client.Stats.Get()
-fmt.Printf("requests=%d tokens=%d success=%d failed=%d\n",
-    total, tokens, success, failed)
+total, input, output, success, failed := client.Stats.Get()
+fmt.Printf("requests=%d  input=%d  output=%d  success=%d  failed=%d\n",
+    total, input, output, success, failed)
+
+// Cache activity totals (all providers, all requests)
+fmt.Printf("cache_writes=%d  cache_reads=%d\n",
+    client.Stats.CacheCreatedTokens.Load(),
+    client.Stats.CacheReadTokens.Load())
 ```
 
 ---

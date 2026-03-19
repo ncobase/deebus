@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.6.0] — 2026-03-19
+
+### Added
+
+- **`Stats.CacheCreatedTokens` / `Stats.CacheReadTokens`** — aggregate atomic counters for prompt-cache activity across all requests and providers. `RecordRequest` now accepts `cacheCreated, cacheRead int` parameters; `wrapStream` captures cache values from the Done chunk.
+- **`Response.ReasoningTokens` / `StreamChunk.ReasoningTokens`** — subset of `OutputTokens` used for internal chain-of-thought reasoning. Populated from `completion_tokens_details.reasoning_tokens` (OpenAI o-series) and `thoughtsTokenCount` (Gemini thinking models).
+- **Gemini context caching** — `cachedContentTokenCount` from `usageMetadata` is now parsed in both `Complete` and `Stream` and reported via `CacheUsage.ReadTokens`.
+- **Gemini `thoughtsTokenCount`** — thinking-model tokens are now included in `OutputTokens` (billed in addition to `candidatesTokenCount`); also reported as `ReasoningTokens`.
+- **Integration test suite** (`integration_test.go`) — real-API regression tests for Anthropic, OpenAI, and Gemini covering complete, stream, embed, prompt caching, UserID attribution, and multi-provider fallback. Tests are skipped automatically when `token.test` is absent.
+
+### Fixed
+
+- **Anthropic `InputTokens` undercount** — the API returns `input_tokens` as only the uncached portion of the input. `InputTokens` now equals the true total: `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`. Affects both `Complete` and `Stream`.
+- **Gemini `TokensUsed` unreliable** — `totalTokenCount` from the Gemini API excludes `cachedContentTokenCount`. `TokensUsed` is now computed as `InputTokens + OutputTokens` instead of trusting `totalTokenCount`.
+
+---
+
 ## [1.5.0] — 2026-03-19
 
 ### Added

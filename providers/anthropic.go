@@ -390,6 +390,7 @@ func (p *AnthropicProvider) Health(_ context.Context) error { return nil }
 func (p *AnthropicProvider) setHeaders(r *http.Request, withCaching bool) {
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("x-api-key", p.cfg.APIKey)
+	r.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
 	r.Header.Set("anthropic-version", anthropicVersion)
 	if withCaching {
 		r.Header.Set("anthropic-beta", anthropicBetaCaching)

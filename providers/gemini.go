@@ -63,14 +63,13 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent?key=%s",
-		p.cfg.BaseURL, req.Model, p.cfg.APIKey)
+	url := p.geminiURL(fmt.Sprintf("/v1beta/models/%s:generateContent", req.Model), "")
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
+	p.setHeaders(httpReq)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -190,14 +189,13 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?key=%s&alt=sse",
-		p.cfg.BaseURL, req.Model, p.cfg.APIKey)
+	url := p.geminiURL(fmt.Sprintf("/v1beta/models/%s:streamGenerateContent", req.Model), "alt=sse")
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
+	p.setHeaders(httpReq)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -332,14 +330,13 @@ func (p *GeminiProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1beta/models/%s:batchEmbedContents?key=%s",
-		p.cfg.BaseURL, req.Model, p.cfg.APIKey)
+	url := p.geminiURL(fmt.Sprintf("/v1beta/models/%s:batchEmbedContents", req.Model), "")
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
+	p.setHeaders(httpReq)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -374,6 +371,35 @@ func (p *GeminiProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 }
 
 func (p *GeminiProvider) Health(_ context.Context) error { return nil }
+
+// setHeaders sets common headers on a Gemini HTTP request.
+// Authorization: Bearer is sent for proxy compatibility.
+// The native Google API authenticates via the ?key= URL parameter (see
+// geminiURL) and ignores the Bearer header.
+func (p *GeminiProvider) setHeaders(r *http.Request) {
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+}
+
+// geminiURL builds a Gemini endpoint URL. When BaseURL targets the native
+// Google API (googleapis.com), the API key is appended as ?key=[,extra]. For
+// any other base URL (proxy), the key is omitted and only the extra query
+// string (if any) is added; auth is via Authorization: Bearer header only,
+// because proxies reject the ?key= parameter.
+func (p *GeminiProvider) geminiURL(path, extraQuery string) string {
+	base := p.cfg.BaseURL + path
+	if strings.Contains(p.cfg.BaseURL, "googleapis.com") {
+		q := "key=" + p.cfg.APIKey
+		if extraQuery != "" {
+			q += "&" + extraQuery
+		}
+		return base + "?" + q
+	}
+	if extraQuery != "" {
+		return base + "?" + extraQuery
+	}
+	return base
+}
 
 // geminiTaskType maps a unified InputType string to a Gemini taskType constant.
 func geminiTaskType(inputType string) string {

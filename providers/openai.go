@@ -95,7 +95,18 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 		Model string `json:"model"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	// Buffer the body so we can retry as SSE if JSON decode fails.
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if err := json.Unmarshal(rawBody, &result); err != nil {
+		// Some proxies always return SSE (streaming) regardless of the
+		// stream flag. Fall back to SSE parsing if the body looks like it.
+		if strings.HasPrefix(strings.TrimSpace(string(rawBody)), "data:") {
+			return p.completeFromSSE(ctx, req, rawBody)
+		}
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
@@ -114,6 +125,42 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 		FinishReason:    result.Choices[0].FinishReason,
 		ToolCalls:       result.Choices[0].Message.ToolCalls,
 		CacheUsage:      CacheUsage{ReadTokens: result.Usage.PromptTokensDetails.CachedTokens},
+		CreatedAt:       time.Now(),
+	}, nil
+}
+
+// completeFromSSE handles the case where a proxy returns SSE even for a
+// non-streaming request. It consumes all chunks and returns a synthesised
+// Response matching the non-streaming contract.
+func (p *OpenAIProvider) completeFromSSE(ctx context.Context, req *Request, body []byte) (*Response, error) {
+	ch := p.parseSSEStream(ctx, bytes.NewReader(body))
+
+	var content strings.Builder
+	var done *StreamChunk
+	for chunk := range ch {
+		if chunk.Error != nil {
+			return nil, chunk.Error
+		}
+		content.WriteString(chunk.Content)
+		if chunk.Done {
+			done = chunk
+		}
+	}
+	if done == nil {
+		return nil, fmt.Errorf("no final chunk in SSE response")
+	}
+
+	return &Response{
+		Content:         content.String(),
+		Model:           req.Model,
+		Provider:        p.Name(),
+		InputTokens:     done.InputTokens,
+		OutputTokens:    done.OutputTokens,
+		TokensUsed:      done.TokensUsed,
+		ReasoningTokens: done.ReasoningTokens,
+		FinishReason:    done.FinishReason,
+		ToolCalls:       done.ToolCalls,
+		CacheUsage:      done.CacheUsage,
 		CreatedAt:       time.Now(),
 	}, nil
 }
@@ -164,10 +211,24 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 
+	respBody := resp.Body
+	out := make(chan *StreamChunk, 16)
+	go func() {
+		defer close(out)
+		defer respBody.Close()
+		for c := range p.parseSSEStream(ctx, respBody) {
+			out <- c
+		}
+	}()
+	return out, nil
+}
+
+// parseSSEStream reads OpenAI SSE chunks from r, emitting *StreamChunk values
+// on the returned channel. The channel is closed when the stream ends.
+func (p *OpenAIProvider) parseSSEStream(ctx context.Context, r io.Reader) <-chan *StreamChunk {
 	ch := make(chan *StreamChunk, 16)
 	go func() {
 		defer close(ch)
-		defer resp.Body.Close()
 
 		// Accumulates streaming tool call deltas by index.
 		// The first delta for each index carries id, type, and name;
@@ -184,7 +245,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		// the usage chunk arrives (stream_options.include_usage = true).
 		var pending *StreamChunk
 
-		scanner := bufio.NewScanner(resp.Body)
+		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
 			line := scanner.Text()
 			if !strings.HasPrefix(line, "data: ") {
@@ -289,8 +350,10 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 				}
 			}
 
-			// When finish_reason is set, build the final chunk and hold it
-			// until the usage chunk arrives (next iteration).
+			// When finish_reason is set, build the final chunk.
+			// If usage is present in the same chunk (some proxies omit the
+			// separate usage-only chunk), populate and emit immediately.
+			// Otherwise hold pending for the next usage-only chunk or [DONE].
 			if choice.FinishReason != "" {
 				pending = &StreamChunk{
 					Done:         true,
@@ -310,6 +373,29 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 					}
 					pending.ToolCalls = toolCalls
 				}
+				if chunk.Usage != nil {
+					pending.InputTokens = chunk.Usage.PromptTokens
+					pending.OutputTokens = chunk.Usage.CompletionTokens
+					pending.TokensUsed = chunk.Usage.TotalTokens
+					pending.ReasoningTokens = chunk.Usage.CompletionTokensDetails.ReasoningTokens
+					pending.CacheUsage = CacheUsage{
+						ReadTokens: chunk.Usage.PromptTokensDetails.CachedTokens,
+					}
+					select {
+					case ch <- pending:
+					case <-ctx.Done():
+					}
+					pending = nil
+				}
+			}
+		}
+
+		// Emit any pending final chunk when the stream closes without a
+		// [DONE] marker (some proxies omit it).
+		if pending != nil {
+			select {
+			case ch <- pending:
+			case <-ctx.Done():
 			}
 		}
 
@@ -321,7 +407,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		}
 	}()
 
-	return ch, nil
+	return ch
 }
 
 func (p *OpenAIProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, error) {
