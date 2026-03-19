@@ -97,6 +97,18 @@ type DocumentSource struct {
 type Message struct {
 	Role    string         `json:"role"`    // "user", "assistant", "system", "tool"
 	Content []ContentBlock `json:"content"`
+
+	// ToolCallID is the ID of the tool call this message is responding to.
+	// Required when Role == "tool".
+	ToolCallID string `json:"tool_call_id,omitempty"`
+
+	// ToolCalls holds tool invocations made by the model.
+	// Populated when Role == "assistant" and the model called one or more tools.
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+
+	// Name is the tool function name for role="tool" messages.
+	// Required by Gemini to construct the functionResponse.
+	Name string `json:"name,omitempty"`
 }
 
 // Tool describes a function that the model may call.

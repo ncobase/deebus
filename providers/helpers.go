@@ -2,6 +2,8 @@ package providers
 
 import "encoding/json"
 
+// ─── Message constructors ─────────────────────────────────────────────────────
+
 // SimpleMessage creates a single-text-block message.
 func SimpleMessage(role, text string) Message {
 	return Message{
@@ -45,6 +47,35 @@ func DocumentMessage(role, docData, mediaType string) Message {
 	}
 }
 
+// AssistantMessage creates an assistant message, optionally including tool calls.
+// Use this when building conversation history after the model has called tools.
+func AssistantMessage(content string, toolCalls []ToolCall) Message {
+	var blocks []ContentBlock
+	if content != "" {
+		blocks = []ContentBlock{TextContent{Type: "text", Text: content}}
+	}
+	return Message{
+		Role:      "assistant",
+		Content:   blocks,
+		ToolCalls: toolCalls,
+	}
+}
+
+// ToolResultMessage creates a tool result message for multi-turn tool calling.
+//   - toolCallID: the ID from the ToolCall that was executed
+//   - name:       the function name (required by Gemini for functionResponse)
+//   - result:     the tool's output, either plain text or JSON
+func ToolResultMessage(toolCallID, name, result string) Message {
+	return Message{
+		Role:       "tool",
+		Content:    []ContentBlock{TextContent{Type: "text", Text: result}},
+		ToolCallID: toolCallID,
+		Name:       name,
+	}
+}
+
+// ─── Content helpers ──────────────────────────────────────────────────────────
+
 // ExtractText returns the text from the first TextContent block, or "".
 func ExtractText(content []ContentBlock) string {
 	for _, b := range content {
@@ -72,6 +103,8 @@ func ExtractSystemMessage(messages []Message) (system string, rest []Message) {
 	}
 	return
 }
+
+// ─── Tool format converters ───────────────────────────────────────────────────
 
 // ConvertToolsToAnthropic converts the unified Tool slice to Anthropic's format.
 // Anthropic uses "input_schema" instead of "parameters" and does not wrap
@@ -132,128 +165,251 @@ func AnthropicToolChoice(choice string) map[string]any {
 	}
 }
 
-// ConvertToOpenAIFormat converts messages to the OpenAI chat-completions format.
+// ─── Provider format converters ───────────────────────────────────────────────
+
+// ConvertToOpenAIFormat converts messages to the OpenAI chat-completions format,
+// including tool result messages (role="tool") and assistant messages with tool_calls.
 func ConvertToOpenAIFormat(messages []Message) []map[string]any {
 	out := make([]map[string]any, 0, len(messages))
 	for _, msg := range messages {
-		// Tool result messages use a flat string content
-		if msg.Role == "tool" {
+		switch msg.Role {
+		case "tool":
+			// Tool result: flat string content with tool_call_id reference.
 			out = append(out, map[string]any{
-				"role":    "tool",
-				"content": ExtractText(msg.Content),
+				"role":         "tool",
+				"tool_call_id": msg.ToolCallID,
+				"content":      ExtractText(msg.Content),
 			})
-			continue
-		}
 
-		parts := make([]map[string]any, 0, len(msg.Content))
-		for _, block := range msg.Content {
-			switch b := block.(type) {
-			case TextContent:
-				parts = append(parts, map[string]any{"type": "text", "text": b.Text})
-			case ImageContent:
-				imgBlock := map[string]any{"type": "image_url"}
-				switch b.Source.Type {
-				case "url":
-					iu := map[string]any{"url": b.Source.URL}
-					if b.Detail != "" {
-						iu["detail"] = b.Detail
-					}
-					imgBlock["image_url"] = iu
-				case "base64":
-					dataURL := "data:" + b.Source.MediaType + ";base64," + b.Source.Data
-					imgBlock["image_url"] = map[string]any{"url": dataURL}
+		case "assistant":
+			if len(msg.ToolCalls) > 0 {
+				// Assistant message with tool calls — content may be nil/empty.
+				m := map[string]any{
+					"role":       "assistant",
+					"tool_calls": msg.ToolCalls,
 				}
-				parts = append(parts, imgBlock)
-			case AudioContent:
-				parts = append(parts, map[string]any{
-					"type": "input_audio",
-					"input_audio": map[string]any{
-						"data":   b.Source.Data,
-						"format": b.Source.Format,
-					},
-				})
+				if text := ExtractText(msg.Content); text != "" {
+					m["content"] = text
+				} else {
+					m["content"] = nil // OpenAI expects null when content is absent
+				}
+				out = append(out, m)
+			} else {
+				out = append(out, openAIContentMessage(msg))
 			}
+
+		default:
+			out = append(out, openAIContentMessage(msg))
 		}
-		out = append(out, map[string]any{"role": msg.Role, "content": parts})
 	}
 	return out
 }
 
-// ConvertToAnthropicFormat converts non-system messages to the Anthropic
-// Messages API format. System messages must be extracted separately via
-// ExtractSystemMessage.
+// openAIContentMessage serialises a regular message's content blocks.
+func openAIContentMessage(msg Message) map[string]any {
+	parts := make([]map[string]any, 0, len(msg.Content))
+	for _, block := range msg.Content {
+		switch b := block.(type) {
+		case TextContent:
+			parts = append(parts, map[string]any{"type": "text", "text": b.Text})
+		case ImageContent:
+			imgBlock := map[string]any{"type": "image_url"}
+			switch b.Source.Type {
+			case "url":
+				iu := map[string]any{"url": b.Source.URL}
+				if b.Detail != "" {
+					iu["detail"] = b.Detail
+				}
+				imgBlock["image_url"] = iu
+			case "base64":
+				dataURL := "data:" + b.Source.MediaType + ";base64," + b.Source.Data
+				imgBlock["image_url"] = map[string]any{"url": dataURL}
+			}
+			parts = append(parts, imgBlock)
+		case AudioContent:
+			parts = append(parts, map[string]any{
+				"type": "input_audio",
+				"input_audio": map[string]any{
+					"data":   b.Source.Data,
+					"format": b.Source.Format,
+				},
+			})
+		}
+	}
+	return map[string]any{"role": msg.Role, "content": parts}
+}
+
+// ConvertToAnthropicFormat converts non-system messages to the Anthropic Messages
+// API format, including tool result and assistant+tool_calls messages.
+// System messages must be extracted separately via ExtractSystemMessage.
 func ConvertToAnthropicFormat(messages []Message) []map[string]any {
 	out := make([]map[string]any, 0, len(messages))
 	for _, msg := range messages {
-		if msg.Role == "system" {
-			continue // handled by caller via ExtractSystemMessage
-		}
-		parts := make([]map[string]any, 0, len(msg.Content))
-		for _, block := range msg.Content {
-			switch b := block.(type) {
-			case TextContent:
-				parts = append(parts, map[string]any{"type": "text", "text": b.Text})
-			case ImageContent:
-				src := map[string]any{"type": b.Source.Type}
-				switch b.Source.Type {
-				case "base64":
-					src["media_type"] = b.Source.MediaType
-					src["data"] = b.Source.Data
-				case "url":
-					src["url"] = b.Source.URL
-				}
-				parts = append(parts, map[string]any{"type": "image", "source": src})
-			case DocumentContent:
-				parts = append(parts, map[string]any{
-					"type": "document",
-					"source": map[string]any{
-						"type":       b.Source.Type,
-						"media_type": b.Source.MediaType,
-						"data":       b.Source.Data,
+		switch msg.Role {
+		case "system":
+			continue // handled by caller
+
+		case "tool":
+			// Anthropic wraps tool results inside a user turn.
+			out = append(out, map[string]any{
+				"role": "user",
+				"content": []map[string]any{
+					{
+						"type":        "tool_result",
+						"tool_use_id": msg.ToolCallID,
+						"content":     ExtractText(msg.Content),
 					},
-				})
+				},
+			})
+
+		case "assistant":
+			if len(msg.ToolCalls) > 0 {
+				// Build content array: optional text block + tool_use blocks.
+				parts := []map[string]any{}
+				if text := ExtractText(msg.Content); text != "" {
+					parts = append(parts, map[string]any{"type": "text", "text": text})
+				}
+				for _, tc := range msg.ToolCalls {
+					// input must be a JSON object, not a string.
+					var input any
+					if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err != nil {
+						input = map[string]any{} // fallback to empty object
+					}
+					parts = append(parts, map[string]any{
+						"type":  "tool_use",
+						"id":    tc.ID,
+						"name":  tc.Function.Name,
+						"input": input,
+					})
+				}
+				out = append(out, map[string]any{"role": "assistant", "content": parts})
+			} else {
+				out = append(out, anthropicContentMessage(msg))
 			}
+
+		default:
+			out = append(out, anthropicContentMessage(msg))
 		}
-		out = append(out, map[string]any{"role": msg.Role, "content": parts})
 	}
 	return out
 }
 
+// anthropicContentMessage serialises a regular message's content blocks.
+func anthropicContentMessage(msg Message) map[string]any {
+	parts := make([]map[string]any, 0, len(msg.Content))
+	for _, block := range msg.Content {
+		switch b := block.(type) {
+		case TextContent:
+			parts = append(parts, map[string]any{"type": "text", "text": b.Text})
+		case ImageContent:
+			src := map[string]any{"type": b.Source.Type}
+			switch b.Source.Type {
+			case "base64":
+				src["media_type"] = b.Source.MediaType
+				src["data"] = b.Source.Data
+			case "url":
+				src["url"] = b.Source.URL
+			}
+			parts = append(parts, map[string]any{"type": "image", "source": src})
+		case DocumentContent:
+			parts = append(parts, map[string]any{
+				"type": "document",
+				"source": map[string]any{
+					"type":       b.Source.Type,
+					"media_type": b.Source.MediaType,
+					"data":       b.Source.Data,
+				},
+			})
+		}
+	}
+	return map[string]any{"role": msg.Role, "content": parts}
+}
+
 // ConvertToGeminiFormat converts non-system messages to the Gemini
-// generateContent format. System messages must be handled via systemInstruction.
+// generateContent format, including functionResponse and functionCall parts.
+// System messages must be handled separately via systemInstruction.
 func ConvertToGeminiFormat(messages []Message) []map[string]any {
 	out := make([]map[string]any, 0, len(messages))
 	for _, msg := range messages {
-		if msg.Role == "system" {
-			continue // handled by caller via systemInstruction
-		}
-		role := msg.Role
-		if role == "assistant" {
-			role = "model"
-		}
-		parts := make([]map[string]any, 0, len(msg.Content))
-		for _, block := range msg.Content {
-			switch b := block.(type) {
-			case TextContent:
-				parts = append(parts, map[string]any{"text": b.Text})
-			case ImageContent:
-				if b.Source.Type == "base64" {
+		switch msg.Role {
+		case "system":
+			continue // handled by caller
+
+		case "tool":
+			// Gemini expects functionResponse as a user turn.
+			var response any
+			text := ExtractText(msg.Content)
+			if err := json.Unmarshal([]byte(text), &response); err != nil {
+				// Non-JSON result: wrap in a response object.
+				response = map[string]any{"result": text}
+			}
+			out = append(out, map[string]any{
+				"role": "user",
+				"parts": []map[string]any{
+					{
+						"functionResponse": map[string]any{
+							"name":     msg.Name,
+							"response": response,
+						},
+					},
+				},
+			})
+
+		case "assistant":
+			role := "model"
+			if len(msg.ToolCalls) > 0 {
+				// Build parts: optional text + functionCall parts.
+				parts := []map[string]any{}
+				if text := ExtractText(msg.Content); text != "" {
+					parts = append(parts, map[string]any{"text": text})
+				}
+				for _, tc := range msg.ToolCalls {
+					var args any
+					if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+						args = map[string]any{}
+					}
 					parts = append(parts, map[string]any{
-						"inline_data": map[string]any{
-							"mime_type": b.Source.MediaType,
-							"data":      b.Source.Data,
+						"functionCall": map[string]any{
+							"name": tc.Function.Name,
+							"args": args,
 						},
 					})
-				} else if b.Source.Type == "url" {
-					parts = append(parts, map[string]any{
-						"file_data": map[string]any{"file_uri": b.Source.URL},
-					})
 				}
+				out = append(out, map[string]any{"role": role, "parts": parts})
+			} else {
+				out = append(out, geminiContentMessage(msg, role))
 			}
+
+		default:
+			out = append(out, geminiContentMessage(msg, msg.Role))
 		}
-		out = append(out, map[string]any{"role": role, "parts": parts})
 	}
 	return out
+}
+
+// geminiContentMessage serialises a regular message's content blocks.
+func geminiContentMessage(msg Message, role string) map[string]any {
+	parts := make([]map[string]any, 0, len(msg.Content))
+	for _, block := range msg.Content {
+		switch b := block.(type) {
+		case TextContent:
+			parts = append(parts, map[string]any{"text": b.Text})
+		case ImageContent:
+			if b.Source.Type == "base64" {
+				parts = append(parts, map[string]any{
+					"inline_data": map[string]any{
+						"mime_type": b.Source.MediaType,
+						"data":      b.Source.Data,
+					},
+				})
+			} else if b.Source.Type == "url" {
+				parts = append(parts, map[string]any{
+					"file_data": map[string]any{"file_uri": b.Source.URL},
+				})
+			}
+		}
+	}
+	return map[string]any{"role": role, "parts": parts}
 }
 
 // MarshalJSON implements json.Marshaler for Message, handling the ContentBlock
@@ -276,8 +432,18 @@ func (m Message) MarshalJSON() ([]byte, error) {
 			parts = append(parts, map[string]any{"type": "document", "source": b.Source})
 		}
 	}
-	return json.Marshal(struct {
-		Role    string           `json:"role"`
-		Content []map[string]any `json:"content"`
-	}{Role: m.Role, Content: parts})
+	type wire struct {
+		Role       string           `json:"role"`
+		Content    []map[string]any `json:"content"`
+		ToolCallID string           `json:"tool_call_id,omitempty"`
+		ToolCalls  []ToolCall       `json:"tool_calls,omitempty"`
+		Name       string           `json:"name,omitempty"`
+	}
+	return json.Marshal(wire{
+		Role:       m.Role,
+		Content:    parts,
+		ToolCallID: m.ToolCallID,
+		ToolCalls:  m.ToolCalls,
+		Name:       m.Name,
+	})
 }

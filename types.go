@@ -27,8 +27,10 @@ type (
 
 // Message constructors — convenience wrappers around the providers package.
 var (
-	SimpleMessage   = providers.SimpleMessage
-	ImageMessage    = providers.ImageMessage
-	AudioMessage    = providers.AudioMessage
-	DocumentMessage = providers.DocumentMessage
+	SimpleMessage      = providers.SimpleMessage
+	ImageMessage       = providers.ImageMessage
+	AudioMessage       = providers.AudioMessage
+	DocumentMessage    = providers.DocumentMessage
+	AssistantMessage   = providers.AssistantMessage
+	ToolResultMessage  = providers.ToolResultMessage
 )

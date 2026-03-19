@@ -29,13 +29,7 @@ func NewCohere(cfg Config) *CohereProvider {
 func (p *CohereProvider) Name() string { return "cohere" }
 
 func (p *CohereProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
-	messages := make([]map[string]any, 0, len(req.Messages))
-	for _, msg := range req.Messages {
-		messages = append(messages, map[string]any{
-			"role":    msg.Role,
-			"content": ExtractText(msg.Content),
-		})
-	}
+	messages := cohereMessages(req.Messages)
 
 	body := map[string]any{
 		"model":    req.Model,
@@ -132,13 +126,7 @@ func (p *CohereProvider) Complete(ctx context.Context, req *Request) (*Response,
 
 // Stream implements streaming via Cohere's SSE endpoint, including tool-call events.
 func (p *CohereProvider) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
-	messages := make([]map[string]any, 0, len(req.Messages))
-	for _, msg := range req.Messages {
-		messages = append(messages, map[string]any{
-			"role":    msg.Role,
-			"content": ExtractText(msg.Content),
-		})
-	}
+	messages := cohereMessages(req.Messages)
 
 	body := map[string]any{
 		"model":    req.Model,
@@ -345,4 +333,51 @@ func (p *CohereProvider) Health(_ context.Context) error { return nil }
 func (p *CohereProvider) setHeaders(r *http.Request) {
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+}
+
+// cohereMessages converts the unified message slice to Cohere's v2 chat format.
+// Regular messages use a plain string content; assistant messages with tool calls
+// include the tool_calls array; tool result messages use the document content type.
+func cohereMessages(msgs []Message) []map[string]any {
+	out := make([]map[string]any, 0, len(msgs))
+	for _, msg := range msgs {
+		switch msg.Role {
+		case "tool":
+			// Cohere v2 tool result: role="tool", tool_call_id, content as document.
+			out = append(out, map[string]any{
+				"role":         "tool",
+				"tool_call_id": msg.ToolCallID,
+				"content": []map[string]any{
+					{
+						"type":     "document",
+						"document": map[string]any{"data": ExtractText(msg.Content)},
+					},
+				},
+			})
+
+		case "assistant":
+			if len(msg.ToolCalls) > 0 {
+				m := map[string]any{
+					"role":       "assistant",
+					"tool_calls": msg.ToolCalls,
+				}
+				if text := ExtractText(msg.Content); text != "" {
+					m["tool_plan"] = text
+				}
+				out = append(out, m)
+			} else {
+				out = append(out, map[string]any{
+					"role":    "assistant",
+					"content": ExtractText(msg.Content),
+				})
+			}
+
+		default:
+			out = append(out, map[string]any{
+				"role":    msg.Role,
+				"content": ExtractText(msg.Content),
+			})
+		}
+	}
+	return out
 }
