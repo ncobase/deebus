@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.0] — 2026-03-19
+
+### Added
+
+- **Prompt caching** — user-controlled `cache_control` markers, zero library-side policy.
+  - `CacheControl` struct with `Type` (`"ephemeral"`) and `TTL` (`"5m"` default, `"1h"` for longer-lived content).
+  - `CacheControl` field on `TextContent`, `ImageContent`, `DocumentContent`, and `Tool` — set at whichever granularity is appropriate for the use case.
+  - **Anthropic**: `anthropicHasCacheControl` detects markers; `anthropic-beta: prompt-caching-2024-07-31` header added automatically when caching is active. `BuildAnthropicSystem` serialises system messages as a content-block array when cache_control is present, or a plain string otherwise (backward-compatible). Cache breakpoint order follows the Anthropic spec: Tools → System → Messages.
+  - **OpenAI**: automatic server-side caching; `stream_options.include_usage` added to streaming requests so cached-token counts are always available in the final chunk.
+  - `CacheUsage` in `Response` and `StreamChunk`: `CreatedTokens` (cache writes, Anthropic) and `ReadTokens` (cache hits, Anthropic + OpenAI).
+- **`UserID string`** on `Request` — forwarded as `metadata.user_id` (Anthropic) and `user` (OpenAI) for provider-side abuse detection and per-user rate limiting.
+- **`TextMessage`** replaces `SimpleMessage` as the primary text-message constructor. Naming is now consistent with `ImageMessage`, `AudioMessage`, `DocumentMessage`, `AssistantMessage`, `ToolResultMessage`.
+- **`examples/06-caching`** — demonstrates all three caching patterns: system prompt, tool-definition boundary, and large retrieved document in the user turn.
+
+### Changed
+
+- `SimpleMessage` removed. All internal usages updated to `TextMessage`. No backward-compatibility shim — the library has no published releases.
+
+---
+
 ## [1.4.0] — 2026-03-19
 
 ### Added
@@ -134,7 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Five provider implementations: OpenAI, Anthropic, Gemini, Ollama, Cohere.
 - YAML configuration via `LoadConfig`.
 - Primary-plus-fallbacks routing.
-- Multimodal message constructors: `SimpleMessage`, `ImageMessage`, `AudioMessage`, `DocumentMessage`.
+- Multimodal message constructors: `TextMessage`, `ImageMessage`, `AudioMessage`, `DocumentMessage`.
 - Streaming (OpenAI SSE, Anthropic SSE).
 - Function/tool calling for OpenAI and Anthropic.
 - Structural circuit breaker (state machine without middleware integration).

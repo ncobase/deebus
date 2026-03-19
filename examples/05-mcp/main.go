@@ -131,8 +131,8 @@ func agentWithMCP(ctx context.Context, client *deebus.Client, mcpClient *mcp.Cli
 	answer, history, err := client.RunAgent(ctx,
 		&deebus.Request{
 			Messages: []deebus.Message{
-				deebus.SimpleMessage("system", "You are a helpful assistant. Use the provided tools to answer questions about the filesystem."),
-				deebus.SimpleMessage("user", fmt.Sprintf("How many files are in %s? List their names.", os.TempDir())),
+				deebus.TextMessage("system", "You are a helpful assistant. Use the provided tools to answer questions about the filesystem."),
+				deebus.TextMessage("user", fmt.Sprintf("How many files are in %s? List their names.", os.TempDir())),
 			},
 			Tools: tools,
 		},
@@ -193,7 +193,7 @@ func httpDemo(ctx context.Context, client *deebus.Client) {
 	answer, _, err := client.RunAgent(ctx,
 		&deebus.Request{
 			Messages: []deebus.Message{
-				deebus.SimpleMessage("user", "What can you help me with?"),
+				deebus.TextMessage("user", "What can you help me with?"),
 			},
 			Tools: tools,
 		},

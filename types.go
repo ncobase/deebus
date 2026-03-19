@@ -6,12 +6,16 @@ import "github.com/ncobase/deebus/providers"
 // the providers sub-package directly.
 type (
 	// Provider types.
-	Provider        = providers.Provider
-	Request         = providers.Request
-	Response        = providers.Response
-	StreamChunk     = providers.StreamChunk
-	EmbedRequest    = providers.EmbedRequest
-	EmbedResponse   = providers.EmbedResponse
+	Provider      = providers.Provider
+	Request       = providers.Request
+	Response      = providers.Response
+	StreamChunk   = providers.StreamChunk
+	EmbedRequest  = providers.EmbedRequest
+	EmbedResponse = providers.EmbedResponse
+
+	// Cache types.
+	CacheControl = providers.CacheControl
+	CacheUsage   = providers.CacheUsage
 
 	// Message types.
 	Message         = providers.Message
@@ -32,7 +36,7 @@ type (
 
 // Message constructors — convenience wrappers around the providers package.
 var (
-	SimpleMessage     = providers.SimpleMessage
+	TextMessage       = providers.TextMessage
 	ImageMessage      = providers.ImageMessage
 	AudioMessage      = providers.AudioMessage
 	DocumentMessage   = providers.DocumentMessage

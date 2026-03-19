@@ -152,7 +152,7 @@ func TestSetLogger(t *testing.T) {
 	// but the logging middleware will still fire).
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	c.Complete(ctx, &Request{Messages: []Message{SimpleMessage("user", "ping")}}) //nolint:errcheck
+	c.Complete(ctx, &Request{Messages: []Message{TextMessage("user", "ping")}}) //nolint:errcheck
 
 	// We can't guarantee the network call will complete in time, but at least
 	// verify SetLogger didn't panic.
@@ -179,7 +179,7 @@ func TestStatsRecording(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	c.Complete(ctx, &Request{Messages: []Message{SimpleMessage("user", "ping")}}) //nolint:errcheck
+	c.Complete(ctx, &Request{Messages: []Message{TextMessage("user", "ping")}}) //nolint:errcheck
 
 	total, _, _, _ := c.Stats.Get()
 	if total == 0 {
@@ -210,7 +210,7 @@ func TestClientConcurrency(t *testing.T) {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 			defer cancel()
-			c.Complete(ctx, &Request{Messages: []Message{SimpleMessage("user", "hi")}}) //nolint:errcheck
+			c.Complete(ctx, &Request{Messages: []Message{TextMessage("user", "hi")}}) //nolint:errcheck
 		}()
 	}
 
@@ -270,7 +270,7 @@ func TestStreamStatsRecordedOnFailure(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	c.Stream(ctx, &Request{Messages: []Message{SimpleMessage("user", "hi")}}) //nolint:errcheck
+	c.Stream(ctx, &Request{Messages: []Message{TextMessage("user", "hi")}}) //nolint:errcheck
 
 	total, _, _, _ := c.Stats.Get()
 	if total == 0 {

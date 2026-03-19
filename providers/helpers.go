@@ -4,8 +4,8 @@ import "encoding/json"
 
 // ─── Message constructors ─────────────────────────────────────────────────────
 
-// SimpleMessage creates a single-text-block message.
-func SimpleMessage(role, text string) Message {
+// TextMessage creates a single-text-block message.
+func TextMessage(role, text string) Message {
 	return Message{
 		Role:    role,
 		Content: []ContentBlock{TextContent{Type: "text", Text: text}},
@@ -104,19 +104,95 @@ func ExtractSystemMessage(messages []Message) (system string, rest []Message) {
 	return
 }
 
+// BuildAnthropicSystem returns the value for the Anthropic "system" request
+// field. When any system message content block carries a CacheControl marker,
+// the field is serialised as an array of content blocks (required by the API).
+// Otherwise it falls back to a plain concatenated string.
+func BuildAnthropicSystem(messages []Message) any {
+	var sysBlocks []ContentBlock
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			sysBlocks = append(sysBlocks, msg.Content...)
+		}
+	}
+	if len(sysBlocks) == 0 {
+		return nil
+	}
+
+	// Check for any cache_control marker.
+	needsBlocks := false
+	for _, b := range sysBlocks {
+		if tc, ok := b.(TextContent); ok && tc.CacheControl != nil {
+			needsBlocks = true
+			break
+		}
+		if dc, ok := b.(DocumentContent); ok && dc.CacheControl != nil {
+			needsBlocks = true
+			break
+		}
+	}
+
+	if !needsBlocks {
+		// Plain string — backward-compatible path.
+		var sb string
+		for _, b := range sysBlocks {
+			if tc, ok := b.(TextContent); ok {
+				if sb != "" {
+					sb += "\n"
+				}
+				sb += tc.Text
+			}
+		}
+		return sb
+	}
+
+	// Array of content blocks — required when cache_control is present.
+	parts := make([]map[string]any, 0, len(sysBlocks))
+	for _, b := range sysBlocks {
+		switch tc := b.(type) {
+		case TextContent:
+			block := map[string]any{"type": "text", "text": tc.Text}
+			if tc.CacheControl != nil {
+				block["cache_control"] = tc.CacheControl
+			}
+			parts = append(parts, block)
+		case DocumentContent:
+			block := map[string]any{
+				"type": "document",
+				"source": map[string]any{
+					"type":       tc.Source.Type,
+					"media_type": tc.Source.MediaType,
+					"data":       tc.Source.Data,
+				},
+			}
+			if tc.CacheControl != nil {
+				block["cache_control"] = tc.CacheControl
+			}
+			parts = append(parts, block)
+		}
+	}
+	return parts
+}
+
 // ─── Tool format converters ───────────────────────────────────────────────────
 
 // ConvertToolsToAnthropic converts the unified Tool slice to Anthropic's format.
 // Anthropic uses "input_schema" instead of "parameters" and does not wrap
 // tools in a "function" envelope.
+// If a tool carries a CacheControl marker it is included, enabling the caller
+// to cache the tools array at a chosen boundary (typically the last tool).
 func ConvertToolsToAnthropic(tools []Tool) []map[string]any {
 	result := make([]map[string]any, len(tools))
 	for i, t := range tools {
-		result[i] = map[string]any{
+		m := map[string]any{
 			"name":         t.Function.Name,
 			"description":  t.Function.Description,
 			"input_schema": t.Function.Parameters,
 		}
+		if t.CacheControl != nil {
+			m["cache_control"] = t.CacheControl
+		}
+		result[i] = m
 	}
 	return result
 }
@@ -251,15 +327,20 @@ func ConvertToAnthropicFormat(messages []Message) []map[string]any {
 
 		case "tool":
 			// Anthropic wraps tool results inside a user turn.
+			toolBlock := map[string]any{
+				"type":        "tool_result",
+				"tool_use_id": msg.ToolCallID,
+				"content":     ExtractText(msg.Content),
+			}
+			// Propagate cache_control from the first content block, if set.
+			if len(msg.Content) > 0 {
+				if tc, ok := msg.Content[0].(TextContent); ok && tc.CacheControl != nil {
+					toolBlock["cache_control"] = tc.CacheControl
+				}
+			}
 			out = append(out, map[string]any{
-				"role": "user",
-				"content": []map[string]any{
-					{
-						"type":        "tool_result",
-						"tool_use_id": msg.ToolCallID,
-						"content":     ExtractText(msg.Content),
-					},
-				},
+				"role":    "user",
+				"content": []map[string]any{toolBlock},
 			})
 
 		case "assistant":
@@ -294,13 +375,18 @@ func ConvertToAnthropicFormat(messages []Message) []map[string]any {
 	return out
 }
 
-// anthropicContentMessage serialises a regular message's content blocks.
+// anthropicContentMessage serialises a regular message's content blocks,
+// including any cache_control markers for prompt caching.
 func anthropicContentMessage(msg Message) map[string]any {
 	parts := make([]map[string]any, 0, len(msg.Content))
 	for _, block := range msg.Content {
 		switch b := block.(type) {
 		case TextContent:
-			parts = append(parts, map[string]any{"type": "text", "text": b.Text})
+			m := map[string]any{"type": "text", "text": b.Text}
+			if b.CacheControl != nil {
+				m["cache_control"] = b.CacheControl
+			}
+			parts = append(parts, m)
 		case ImageContent:
 			src := map[string]any{"type": b.Source.Type}
 			switch b.Source.Type {
@@ -310,16 +396,24 @@ func anthropicContentMessage(msg Message) map[string]any {
 			case "url":
 				src["url"] = b.Source.URL
 			}
-			parts = append(parts, map[string]any{"type": "image", "source": src})
+			m := map[string]any{"type": "image", "source": src}
+			if b.CacheControl != nil {
+				m["cache_control"] = b.CacheControl
+			}
+			parts = append(parts, m)
 		case DocumentContent:
-			parts = append(parts, map[string]any{
+			m := map[string]any{
 				"type": "document",
 				"source": map[string]any{
 					"type":       b.Source.Type,
 					"media_type": b.Source.MediaType,
 					"data":       b.Source.Data,
 				},
-			})
+			}
+			if b.CacheControl != nil {
+				m["cache_control"] = b.CacheControl
+			}
+			parts = append(parts, m)
 		}
 	}
 	return map[string]any{"role": msg.Role, "content": parts}

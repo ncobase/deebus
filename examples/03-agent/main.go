@@ -105,8 +105,8 @@ func blockingAgent(ctx context.Context, client *deebus.Client) {
 	answer, history, err := client.RunAgent(ctx,
 		&deebus.Request{
 			Messages: []deebus.Message{
-				deebus.SimpleMessage("system", "You are a research assistant. Use tools to gather information before answering."),
-				deebus.SimpleMessage("user", "Search for 'Go concurrency patterns' and calculate 2^10, then summarise."),
+				deebus.TextMessage("system", "You are a research assistant. Use tools to gather information before answering."),
+				deebus.TextMessage("user", "Search for 'Go concurrency patterns' and calculate 2^10, then summarise."),
 			},
 			Tools: tools,
 		},
@@ -135,7 +135,7 @@ func streamingAgent(ctx context.Context, client *deebus.Client) {
 	stream, err := client.RunAgentStream(ctx,
 		&deebus.Request{
 			Messages: []deebus.Message{
-				deebus.SimpleMessage("user", "Search for 'circuit breaker pattern' and write a one-sentence summary."),
+				deebus.TextMessage("user", "Search for 'circuit breaker pattern' and write a one-sentence summary."),
 			},
 			Tools: tools,
 		},
@@ -179,8 +179,8 @@ func longRunningAgent(ctx context.Context, client *deebus.Client) {
 	answer, history, err := client.RunAgent(ctx,
 		&deebus.Request{
 			Messages: []deebus.Message{
-				deebus.SimpleMessage("system", "You are a helpful assistant."),
-				deebus.SimpleMessage("user", "Search for topics: Go, Rust, Zig, then summarise all three."),
+				deebus.TextMessage("system", "You are a helpful assistant."),
+				deebus.TextMessage("user", "Search for topics: Go, Rust, Zig, then summarise all three."),
 			},
 			Tools: tools,
 		},

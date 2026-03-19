@@ -204,7 +204,7 @@ func TestRunAgentNoTools(t *testing.T) {
 		},
 	}
 	c := buildTestClient(t, mock)
-	req := &Request{Messages: []Message{SimpleMessage("user", "hi")}}
+	req := &Request{Messages: []Message{TextMessage("user", "hi")}}
 
 	answer, history, err := c.RunAgent(context.Background(), req, nil)
 	if err != nil {
@@ -230,7 +230,7 @@ func TestRunAgentOneTurn(t *testing.T) {
 		},
 	}
 	c := buildTestClient(t, mock)
-	req := &Request{Messages: []Message{SimpleMessage("user", "what time?")}}
+	req := &Request{Messages: []Message{TextMessage("user", "what time?")}}
 
 	toolFn := func(_ context.Context, name, _ string) (string, error) {
 		if name != "get_time" {
@@ -263,7 +263,7 @@ func TestRunAgentMaxIterations(t *testing.T) {
 		},
 	}
 	c := buildTestClient(t, mock)
-	req := &Request{Messages: []Message{SimpleMessage("user", "loop")}}
+	req := &Request{Messages: []Message{TextMessage("user", "loop")}}
 
 	_, _, err := c.RunAgent(context.Background(), req, func(_ context.Context, _, _ string) (string, error) {
 		return "ok", nil
@@ -284,7 +284,7 @@ func TestRunAgentToolError(t *testing.T) {
 		},
 	}
 	c := buildTestClient(t, mock)
-	req := &Request{Messages: []Message{SimpleMessage("user", "hi")}}
+	req := &Request{Messages: []Message{TextMessage("user", "hi")}}
 
 	_, _, err := c.RunAgent(context.Background(), req, func(_ context.Context, _, _ string) (string, error) {
 		return "", errors.New("tool exploded")
@@ -303,7 +303,7 @@ func TestRunAgentHook(t *testing.T) {
 		},
 	}
 	c := buildTestClient(t, mock)
-	req := &Request{Messages: []Message{SimpleMessage("user", "ping")}}
+	req := &Request{Messages: []Message{TextMessage("user", "ping")}}
 
 	var events []AgentEventType
 	hook := func(ev AgentEvent) { events = append(events, ev.Type) }
@@ -335,7 +335,7 @@ func TestRunAgentStreamNoTools(t *testing.T) {
 		},
 	}
 	c := buildTestClient(t, mock)
-	req := &Request{Messages: []Message{SimpleMessage("user", "hi")}}
+	req := &Request{Messages: []Message{TextMessage("user", "hi")}}
 
 	ch, err := c.RunAgentStream(context.Background(), req, nil, nil)
 	if err != nil {
@@ -362,7 +362,7 @@ func TestRunAgentStreamHistory(t *testing.T) {
 		},
 	}
 	c := buildTestClient(t, mock)
-	req := &Request{Messages: []Message{SimpleMessage("user", "calc")}}
+	req := &Request{Messages: []Message{TextMessage("user", "calc")}}
 
 	histCh := make(chan []providers.Message, 1)
 	ch, err := c.RunAgentStream(context.Background(), req, func(_ context.Context, _, _ string) (string, error) {
@@ -389,7 +389,7 @@ func TestRunAgentStreamContextCancel(t *testing.T) {
 		},
 	}
 	c := buildTestClient(t, mock)
-	req := &Request{Messages: []Message{SimpleMessage("user", "hi")}}
+	req := &Request{Messages: []Message{TextMessage("user", "hi")}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 

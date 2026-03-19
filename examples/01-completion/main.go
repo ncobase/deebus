@@ -66,8 +66,8 @@ func singleTurn(ctx context.Context, client *deebus.Client) {
 
 	resp, err := client.Complete(ctx, &deebus.Request{
 		Messages: []deebus.Message{
-			deebus.SimpleMessage("system", "You are a concise technical assistant."),
-			deebus.SimpleMessage("user", "What is exponential backoff? One paragraph."),
+			deebus.TextMessage("system", "You are a concise technical assistant."),
+			deebus.TextMessage("user", "What is exponential backoff? One paragraph."),
 		},
 		MaxTokens:   256,
 		Temperature: 0.3,
@@ -90,7 +90,7 @@ func streaming(ctx context.Context, client *deebus.Client) {
 
 	stream, err := client.Stream(ctx, &deebus.Request{
 		Messages: []deebus.Message{
-			deebus.SimpleMessage("user", "List the Go proverbs you know, one per line."),
+			deebus.TextMessage("user", "List the Go proverbs you know, one per line."),
 		},
 		MaxTokens: 512,
 	})

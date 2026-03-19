@@ -16,6 +16,10 @@ import (
 // Anthropic keeps this constant; new capabilities are gated by anthropic-beta.
 const anthropicVersion = "2023-06-01"
 
+// anthropicBetaCaching is the beta header value that enables prompt caching.
+// Required for cache_control markers to take effect; harmless when absent.
+const anthropicBetaCaching = "prompt-caching-2024-07-31"
+
 // defaultMaxTokens is used when the caller does not specify MaxTokens.
 // Anthropic's API requires the field; there is no server-side default.
 const defaultMaxTokens = 4096
@@ -45,15 +49,15 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 		maxTokens = req.MaxTokens
 	}
 
-	system, msgs := ExtractSystemMessage(req.Messages)
+	_, msgs := ExtractSystemMessage(req.Messages)
 
 	body := map[string]any{
 		"model":      req.Model,
 		"messages":   ConvertToAnthropicFormat(msgs),
 		"max_tokens": maxTokens,
 	}
-	if system != "" {
-		body["system"] = system
+	if sys := BuildAnthropicSystem(req.Messages); sys != nil {
+		body["system"] = sys
 	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
@@ -63,6 +67,9 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 		if req.ToolChoice != "" {
 			body["tool_choice"] = AnthropicToolChoice(req.ToolChoice)
 		}
+	}
+	if req.UserID != "" {
+		body["metadata"] = map[string]any{"user_id": req.UserID}
 	}
 
 	data, err := json.Marshal(body)
@@ -75,7 +82,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	p.setHeaders(httpReq)
+	p.setHeaders(httpReq, anthropicHasCacheControl(req))
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -97,8 +104,10 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 			Input any    `json:"input"`
 		} `json:"content"`
 		Usage struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
+			InputTokens              int `json:"input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 		} `json:"usage"`
 		Model      string `json:"model"`
 		StopReason string `json:"stop_reason"`
@@ -137,7 +146,11 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 		TokensUsed:   result.Usage.InputTokens + result.Usage.OutputTokens,
 		FinishReason: result.StopReason,
 		ToolCalls:    toolCalls,
-		CreatedAt:    time.Now(),
+		CacheUsage: CacheUsage{
+			CreatedTokens: result.Usage.CacheCreationInputTokens,
+			ReadTokens:    result.Usage.CacheReadInputTokens,
+		},
+		CreatedAt: time.Now(),
 	}, nil
 }
 
@@ -147,7 +160,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 		maxTokens = req.MaxTokens
 	}
 
-	system, msgs := ExtractSystemMessage(req.Messages)
+	_, msgs := ExtractSystemMessage(req.Messages)
 
 	body := map[string]any{
 		"model":      req.Model,
@@ -155,8 +168,8 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 		"max_tokens": maxTokens,
 		"stream":     true,
 	}
-	if system != "" {
-		body["system"] = system
+	if sys := BuildAnthropicSystem(req.Messages); sys != nil {
+		body["system"] = sys
 	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
@@ -166,6 +179,9 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 		if req.ToolChoice != "" {
 			body["tool_choice"] = AnthropicToolChoice(req.ToolChoice)
 		}
+	}
+	if req.UserID != "" {
+		body["metadata"] = map[string]any{"user_id": req.UserID}
 	}
 
 	data, err := json.Marshal(body)
@@ -178,7 +194,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	p.setHeaders(httpReq)
+	p.setHeaders(httpReq, anthropicHasCacheControl(req))
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -206,6 +222,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 		blocks := map[int]*blockAccumulator{}
 
 		var inputTokens, outputTokens int
+		var cacheCreated, cacheRead int
 		var stopReason string
 
 		// Unified event shape — fields present depend on event type.
@@ -231,7 +248,9 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 			// message_start
 			Message struct {
 				Usage struct {
-					InputTokens int `json:"input_tokens"`
+					InputTokens              int `json:"input_tokens"`
+					CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+					CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 				} `json:"usage"`
 			} `json:"message"`
 
@@ -267,6 +286,8 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 			switch event.Type {
 			case "message_start":
 				inputTokens = event.Message.Usage.InputTokens
+				cacheCreated = event.Message.Usage.CacheCreationInputTokens
+				cacheRead = event.Message.Usage.CacheReadInputTokens
 
 			case "content_block_start":
 				blocks[event.Index] = &blockAccumulator{
@@ -316,6 +337,10 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 					FinishReason: stopReason,
 					TokensUsed:   inputTokens + outputTokens,
 					ToolCalls:    toolCalls,
+					CacheUsage: CacheUsage{
+						CreatedTokens: cacheCreated,
+						ReadTokens:    cacheRead,
+					},
 				}
 				select {
 				case ch <- final:
@@ -349,8 +374,41 @@ func (p *AnthropicProvider) Embed(_ context.Context, _ *EmbedRequest) (*EmbedRes
 
 func (p *AnthropicProvider) Health(_ context.Context) error { return nil }
 
-func (p *AnthropicProvider) setHeaders(r *http.Request) {
+func (p *AnthropicProvider) setHeaders(r *http.Request, withCaching bool) {
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("x-api-key", p.cfg.APIKey)
 	r.Header.Set("anthropic-version", anthropicVersion)
+	if withCaching {
+		r.Header.Set("anthropic-beta", anthropicBetaCaching)
+	}
+}
+
+// anthropicHasCacheControl reports whether the request contains any
+// cache_control markers on messages, content blocks, or tools.
+// When true, the prompt-caching beta header is added to the HTTP request.
+func anthropicHasCacheControl(req *Request) bool {
+	for _, msg := range req.Messages {
+		for _, b := range msg.Content {
+			switch bc := b.(type) {
+			case TextContent:
+				if bc.CacheControl != nil {
+					return true
+				}
+			case ImageContent:
+				if bc.CacheControl != nil {
+					return true
+				}
+			case DocumentContent:
+				if bc.CacheControl != nil {
+					return true
+				}
+			}
+		}
+	}
+	for _, t := range req.Tools {
+		if t.CacheControl != nil {
+			return true
+		}
+	}
+	return false
 }

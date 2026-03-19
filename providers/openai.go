@@ -46,6 +46,9 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 			body["tool_choice"] = req.ToolChoice
 		}
 	}
+	if req.UserID != "" {
+		body["user"] = req.UserID
+	}
 
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -79,7 +82,10 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
-			TotalTokens int `json:"total_tokens"`
+			TotalTokens          int `json:"total_tokens"`
+			PromptTokensDetails  struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 		Model string `json:"model"`
 	}
@@ -99,15 +105,17 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 		TokensUsed:   result.Usage.TotalTokens,
 		FinishReason: result.Choices[0].FinishReason,
 		ToolCalls:    result.Choices[0].Message.ToolCalls,
+		CacheUsage:   CacheUsage{ReadTokens: result.Usage.PromptTokensDetails.CachedTokens},
 		CreatedAt:    time.Now(),
 	}, nil
 }
 
 func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
 	body := map[string]any{
-		"model":    req.Model,
-		"messages": ConvertToOpenAIFormat(req.Messages),
-		"stream":   true,
+		"model":             req.Model,
+		"messages":          ConvertToOpenAIFormat(req.Messages),
+		"stream":            true,
+		"stream_options":    map[string]any{"include_usage": true},
 	}
 	if req.MaxTokens > 0 {
 		body["max_tokens"] = req.MaxTokens
@@ -120,6 +128,9 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		if req.ToolChoice != "" {
 			body["tool_choice"] = req.ToolChoice
 		}
+	}
+	if req.UserID != "" {
+		body["user"] = req.UserID
 	}
 
 	data, err := json.Marshal(body)
@@ -161,6 +172,10 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		}
 		accumulators := map[int]*tcAccumulator{}
 
+		// Pending final chunk: built when finish_reason is set, emitted after
+		// the usage chunk arrives (stream_options.include_usage = true).
+		var pending *StreamChunk
+
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -169,6 +184,13 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 			}
 			payload := strings.TrimPrefix(line, "data: ")
 			if payload == "[DONE]" {
+				// Emit any pending final chunk that didn't get a usage update.
+				if pending != nil {
+					select {
+					case ch <- pending:
+					case <-ctx.Done():
+					}
+				}
 				return
 			}
 
@@ -188,6 +210,13 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 					} `json:"delta"`
 					FinishReason string `json:"finish_reason"`
 				} `json:"choices"`
+				// Usage chunk emitted by stream_options.include_usage=true.
+				Usage *struct {
+					TotalTokens         int `json:"total_tokens"`
+					PromptTokensDetails struct {
+						CachedTokens int `json:"cached_tokens"`
+					} `json:"prompt_tokens_details"`
+				} `json:"usage"`
 			}
 
 			if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
@@ -196,6 +225,20 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 				case <-ctx.Done():
 				}
 				return
+			}
+
+			// Usage-only chunk (choices is empty): patch and emit the pending final.
+			if len(chunk.Choices) == 0 && chunk.Usage != nil && pending != nil {
+				pending.TokensUsed = chunk.Usage.TotalTokens
+				pending.CacheUsage = CacheUsage{
+					ReadTokens: chunk.Usage.PromptTokensDetails.CachedTokens,
+				}
+				select {
+				case ch <- pending:
+				case <-ctx.Done():
+				}
+				pending = nil
+				continue
 			}
 
 			if len(chunk.Choices) == 0 {
@@ -229,9 +272,10 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 				}
 			}
 
-			// When finish_reason is set, assemble and emit the final chunk.
+			// When finish_reason is set, build the final chunk and hold it
+			// until the usage chunk arrives (next iteration).
 			if choice.FinishReason != "" {
-				final := &StreamChunk{
+				pending = &StreamChunk{
 					Done:         true,
 					FinishReason: choice.FinishReason,
 				}
@@ -247,13 +291,8 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 						tc.Function.Arguments = acc.arguments.String()
 						toolCalls = append(toolCalls, tc)
 					}
-					final.ToolCalls = toolCalls
+					pending.ToolCalls = toolCalls
 				}
-				select {
-				case ch <- final:
-				case <-ctx.Done():
-				}
-				return
 			}
 		}
 

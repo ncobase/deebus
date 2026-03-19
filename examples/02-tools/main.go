@@ -94,7 +94,7 @@ func singleTurn(ctx context.Context, client *deebus.Client) {
 	fmt.Println("── Single-turn tool calling ─────────────────────────────────────────")
 
 	resp, err := client.Complete(ctx, &deebus.Request{
-		Messages:   []deebus.Message{deebus.SimpleMessage("user", "What is the weather in Tokyo?")},
+		Messages:   []deebus.Message{deebus.TextMessage("user", "What is the weather in Tokyo?")},
 		Tools:      []deebus.Tool{weatherTool},
 		ToolChoice: "auto",
 	})
@@ -121,8 +121,8 @@ func multiTurn(ctx context.Context, client *deebus.Client) {
 
 	tools := []deebus.Tool{weatherTool}
 	messages := []deebus.Message{
-		deebus.SimpleMessage("system", "You are a helpful assistant. Use tools when needed."),
-		deebus.SimpleMessage("user", "Compare the weather in Tokyo and Paris."),
+		deebus.TextMessage("system", "You are a helpful assistant. Use tools when needed."),
+		deebus.TextMessage("user", "Compare the weather in Tokyo and Paris."),
 	}
 
 	for turn := 0; turn < 5; turn++ {
@@ -164,7 +164,7 @@ func parallelTools(ctx context.Context, client *deebus.Client) {
 	fmt.Println("── Parallel tool calls ──────────────────────────────────────────────")
 
 	messages := []deebus.Message{
-		deebus.SimpleMessage("user",
+		deebus.TextMessage("user",
 			"What is the weather in Tokyo today, and what events do I have on 2026-03-19?"),
 	}
 	tools := []deebus.Tool{weatherTool, calendarTool}

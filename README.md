@@ -21,6 +21,7 @@
 | **Multi-turn tool calling** | `AssistantMessage` / `ToolResultMessage` with per-provider wire format |
 | **Agent loop** | `RunAgent` / `RunAgentStream` with parallel tool dispatch and event hooks |
 | **MCP client** | Connects to any MCP server via stdio or Streamable HTTP (spec 2025-03-26) |
+| **Prompt caching** | User-controlled `CacheControl` on content blocks and tools; `CacheUsage` in response |
 | **Streaming** | SSE / NDJSON streaming for all five providers |
 | **Multimodal** | Text, images (URL / base64), audio, PDF documents |
 | **Embeddings** | OpenAI, Gemini, Ollama, Cohere |
@@ -91,7 +92,7 @@ func main() {
 
     resp, err := client.Complete(context.Background(), &deebus.Request{
         Messages: []deebus.Message{
-            deebus.SimpleMessage("user", "Explain the circuit breaker pattern."),
+            deebus.TextMessage("user", "Explain the circuit breaker pattern."),
         },
         MaxTokens:   512,
         Temperature: 0.7,
@@ -168,7 +169,7 @@ client, err := deebus.NewClient(deebus.Config{
 ```go
 stream, err := client.Stream(ctx, &deebus.Request{
     Messages: []deebus.Message{
-        deebus.SimpleMessage("user", "Write a haiku about Go."),
+        deebus.TextMessage("user", "Write a haiku about Go."),
     },
 })
 if err != nil {
@@ -235,7 +236,7 @@ tools := []deebus.Tool{{
 }}
 
 resp, err := client.Complete(ctx, &deebus.Request{
-    Messages:   []deebus.Message{deebus.SimpleMessage("user", "Weather in Tokyo?")},
+    Messages:   []deebus.Message{deebus.TextMessage("user", "Weather in Tokyo?")},
     Tools:      tools,
     ToolChoice: "auto", // "auto" | "none" | "required" | specific function name
 })
@@ -250,7 +251,7 @@ for _, call := range resp.ToolCalls {
 ```go
 // Build conversation history manually when executing tools yourself.
 messages := []deebus.Message{
-    deebus.SimpleMessage("user", "What is the weather in Tokyo and London?"),
+    deebus.TextMessage("user", "What is the weather in Tokyo and London?"),
 }
 
 resp, _ := client.Complete(ctx, &deebus.Request{Messages: messages, Tools: tools})
@@ -281,7 +282,7 @@ fmt.Println(final.Content)
 answer, history, err := client.RunAgent(ctx,
     &deebus.Request{
         Messages: []deebus.Message{
-            deebus.SimpleMessage("user", "List the files in /tmp and summarise them."),
+            deebus.TextMessage("user", "List the files in /tmp and summarise them."),
         },
         Tools: tools,
     },
@@ -372,7 +373,7 @@ if err != nil {
 // Run an agent that calls MCP tools automatically.
 answer, _, err := deebusClient.RunAgent(ctx,
     &deebus.Request{
-        Messages: []deebus.Message{deebus.SimpleMessage("user", "List files in /tmp")},
+        Messages: []deebus.Message{deebus.TextMessage("user", "List files in /tmp")},
         Tools:    tools,
     },
     mcpClient.Execute, // AgentToolFunc-compatible
@@ -446,6 +447,73 @@ fmt.Printf("%d vectors of dim %d\n", len(resp.Embeddings), len(resp.Embeddings[0
 ```
 
 Supported by OpenAI, Gemini, Ollama, and Cohere.
+
+---
+
+## Prompt Caching
+
+Caching reduces token costs on repeated static context (system prompts, tool schemas, retrieved documents). The library exposes the mechanism; **policy decisions belong to the caller**.
+
+### Anthropic — explicit `cache_control` markers
+
+Anthropic processes cache breakpoints in order: **Tools → System → Messages**. The `anthropic-beta: prompt-caching-2024-07-31` header is added automatically when markers are detected.
+
+Minimum block size: 1024 tokens (Sonnet), 4096 tokens (Opus / Haiku 4.5+). Maximum 4 breakpoints per request.
+
+```go
+// Cache a system prompt (written on first request, read from cache thereafter).
+req := &deebus.Request{
+    Messages: []deebus.Message{
+        {
+            Role: "system",
+            Content: []deebus.ContentBlock{
+                deebus.TextContent{
+                    Type: "text",
+                    Text: longSystemPrompt, // must exceed minimum token threshold
+                    CacheControl: &deebus.CacheControl{Type: "ephemeral"},
+                    // TTL: "1h" for content queried over longer periods (2× write cost)
+                },
+            },
+        },
+        deebus.TextMessage("user", "Summarise your role."),
+    },
+    UserID: "user-123", // optional: forwarded as metadata.user_id
+}
+
+resp, err := client.Complete(ctx, req)
+fmt.Printf("cache: wrote=%d read=%d\n",
+    resp.CacheUsage.CreatedTokens, resp.CacheUsage.ReadTokens)
+```
+
+```go
+// Cache the tools array at the last tool boundary.
+tools := []deebus.Tool{
+    {Type: "function", Function: schema1},
+    {
+        Type:         "function",
+        Function:     schema2,
+        CacheControl: &deebus.CacheControl{Type: "ephemeral"}, // caches all tools above
+    },
+}
+```
+
+### OpenAI — automatic (zero config)
+
+OpenAI caches the longest cacheable prefix automatically (≥1024 tokens, 50% discount). No markers required — cache hits are reflected in `CacheUsage.ReadTokens`:
+
+```go
+resp, _ := client.Complete(ctx, req)
+if resp.CacheUsage.ReadTokens > 0 {
+    fmt.Printf("openai served %d tokens from cache\n", resp.CacheUsage.ReadTokens)
+}
+```
+
+### CacheUsage fields
+
+| Field | Anthropic | OpenAI |
+|-------|-----------|--------|
+| `CreatedTokens` | `cache_creation_input_tokens` | — |
+| `ReadTokens` | `cache_read_input_tokens` | `prompt_tokens_details.cached_tokens` |
 
 ---
 
@@ -542,7 +610,8 @@ github.com/ncobase/deebus
     ├── 02-tools/      Single-turn and multi-turn tool calling (manual history)
     ├── 03-agent/      RunAgent, RunAgentStream, hooks, history trimming
     ├── 04-embeddings/ Embedding generation and semantic search
-    └── 05-mcp/        MCP stdio and HTTP transports, agent integration
+    ├── 05-mcp/        MCP stdio and HTTP transports, agent integration
+    └── 06-caching/    Prompt caching: system prompt, tool definitions, documents
 ```
 
 ---
