@@ -1,0 +1,26 @@
+providers:
+  anthropic:
+    type: anthropic
+    apiKey: ${ANTHROPIC_API_KEY}
+    baseURL: https://api.anthropic.com
+  
+  openai:
+    type: openai
+    apiKey: ${OPENAI_API_KEY}
+    baseURL: https://api.openai.com
+  
+  gemini:
+    type: gemini
+    apiKey: ${GEMINI_API_KEY}
+    baseURL: https://generativelanguage.googleapis.com
+
+primary: anthropic/claude-opus-4-6
+
+fallbacks:
+  - anthropic/claude-sonnet-4-6
+  - openai/gpt-4o
+  - openai/gpt-4o-mini
+  - gemini/gemini-pro
+
+timeout: 30
+retry: 2
