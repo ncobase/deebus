@@ -88,6 +88,9 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 			PromptTokensDetails struct {
 				CachedTokens int `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
+			CompletionTokensDetails struct {
+				ReasoningTokens int `json:"reasoning_tokens"` // o-series models
+			} `json:"completion_tokens_details"`
 		} `json:"usage"`
 		Model string `json:"model"`
 	}
@@ -101,16 +104,17 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 	}
 
 	return &Response{
-		Content:      result.Choices[0].Message.Content,
-		Model:        result.Model,
-		Provider:     p.Name(),
-		InputTokens:  result.Usage.PromptTokens,
-		OutputTokens: result.Usage.CompletionTokens,
-		TokensUsed:   result.Usage.TotalTokens,
-		FinishReason: result.Choices[0].FinishReason,
-		ToolCalls:    result.Choices[0].Message.ToolCalls,
-		CacheUsage:   CacheUsage{ReadTokens: result.Usage.PromptTokensDetails.CachedTokens},
-		CreatedAt:    time.Now(),
+		Content:         result.Choices[0].Message.Content,
+		Model:           result.Model,
+		Provider:        p.Name(),
+		InputTokens:     result.Usage.PromptTokens,
+		OutputTokens:    result.Usage.CompletionTokens,
+		TokensUsed:      result.Usage.TotalTokens,
+		ReasoningTokens: result.Usage.CompletionTokensDetails.ReasoningTokens,
+		FinishReason:    result.Choices[0].FinishReason,
+		ToolCalls:       result.Choices[0].Message.ToolCalls,
+		CacheUsage:      CacheUsage{ReadTokens: result.Usage.PromptTokensDetails.CachedTokens},
+		CreatedAt:       time.Now(),
 	}, nil
 }
 
@@ -215,6 +219,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 					FinishReason string `json:"finish_reason"`
 				} `json:"choices"`
 				// Usage chunk emitted by stream_options.include_usage=true.
+				// Usage chunk emitted by stream_options.include_usage=true.
 				Usage *struct {
 					PromptTokens     int `json:"prompt_tokens"`
 					CompletionTokens int `json:"completion_tokens"`
@@ -222,6 +227,9 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 					PromptTokensDetails struct {
 						CachedTokens int `json:"cached_tokens"`
 					} `json:"prompt_tokens_details"`
+					CompletionTokensDetails struct {
+						ReasoningTokens int `json:"reasoning_tokens"`
+					} `json:"completion_tokens_details"`
 				} `json:"usage"`
 			}
 
@@ -238,6 +246,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 				pending.InputTokens = chunk.Usage.PromptTokens
 				pending.OutputTokens = chunk.Usage.CompletionTokens
 				pending.TokensUsed = chunk.Usage.TotalTokens
+				pending.ReasoningTokens = chunk.Usage.CompletionTokensDetails.ReasoningTokens
 				pending.CacheUsage = CacheUsage{
 					ReadTokens: chunk.Usage.PromptTokensDetails.CachedTokens,
 				}

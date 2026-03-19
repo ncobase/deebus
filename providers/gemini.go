@@ -97,10 +97,11 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 			FinishReason string `json:"finishReason"`
 		} `json:"candidates"`
 		UsageMetadata struct {
-			PromptTokenCount          int `json:"promptTokenCount"`
-			CandidatesTokenCount      int `json:"candidatesTokenCount"`
-			TotalTokenCount           int `json:"totalTokenCount"`
-			CachedContentTokenCount   int `json:"cachedContentTokenCount"` // Gemini context caching
+			PromptTokenCount        int `json:"promptTokenCount"`
+			CandidatesTokenCount    int `json:"candidatesTokenCount"`
+			TotalTokenCount         int `json:"totalTokenCount"`
+			CachedContentTokenCount int `json:"cachedContentTokenCount"` // context caching
+			ThoughtsTokenCount      int `json:"thoughtsTokenCount"`      // thinking models
 		} `json:"usageMetadata"`
 	}
 
@@ -133,17 +134,23 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 		return nil, fmt.Errorf("empty response from gemini")
 	}
 
+	// thoughtsTokenCount (thinking models) is billed in addition to candidatesTokenCount.
+	// Compute TokensUsed from parts; totalTokenCount excludes cached tokens so is unreliable.
+	input := result.UsageMetadata.PromptTokenCount
+	output := result.UsageMetadata.CandidatesTokenCount + result.UsageMetadata.ThoughtsTokenCount
+
 	return &Response{
-		Content:      content,
-		Model:        req.Model,
-		Provider:     p.Name(),
-		InputTokens:  result.UsageMetadata.PromptTokenCount,
-		OutputTokens: result.UsageMetadata.CandidatesTokenCount,
-		TokensUsed:   result.UsageMetadata.TotalTokenCount,
-		FinishReason: cand.FinishReason,
-		ToolCalls:    toolCalls,
-		CacheUsage:   CacheUsage{ReadTokens: result.UsageMetadata.CachedContentTokenCount},
-		CreatedAt:    time.Now(),
+		Content:         content,
+		Model:           req.Model,
+		Provider:        p.Name(),
+		InputTokens:     input,
+		OutputTokens:    output,
+		TokensUsed:      input + output,
+		ReasoningTokens: result.UsageMetadata.ThoughtsTokenCount,
+		FinishReason:    cand.FinishReason,
+		ToolCalls:       toolCalls,
+		CacheUsage:      CacheUsage{ReadTokens: result.UsageMetadata.CachedContentTokenCount},
+		CreatedAt:       time.Now(),
 	}, nil
 }
 
@@ -208,7 +215,7 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		defer close(ch)
 		defer resp.Body.Close()
 
-		var inputTokens, outputTokens, totalTokens, cacheRead int
+		var inputTokens, outputTokens, cacheRead, thoughts int
 
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
@@ -232,10 +239,10 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 					FinishReason string `json:"finishReason"`
 				} `json:"candidates"`
 				UsageMetadata struct {
-					PromptTokenCount     int `json:"promptTokenCount"`
-					CandidatesTokenCount int `json:"candidatesTokenCount"`
-					TotalTokenCount         int `json:"totalTokenCount"`
+					PromptTokenCount        int `json:"promptTokenCount"`
+					CandidatesTokenCount    int `json:"candidatesTokenCount"`
 					CachedContentTokenCount int `json:"cachedContentTokenCount"`
+					ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
 				} `json:"usageMetadata"`
 			}
 
@@ -243,13 +250,12 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 				continue
 			}
 
-			if event.UsageMetadata.TotalTokenCount > 0 {
+			if event.UsageMetadata.PromptTokenCount > 0 {
 				inputTokens = event.UsageMetadata.PromptTokenCount
 				outputTokens = event.UsageMetadata.CandidatesTokenCount
-				totalTokens = event.UsageMetadata.TotalTokenCount
 				cacheRead = event.UsageMetadata.CachedContentTokenCount
+				thoughts = event.UsageMetadata.ThoughtsTokenCount
 			}
-
 			if len(event.Candidates) == 0 {
 				continue
 			}
@@ -277,13 +283,14 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 			if cand.FinishReason != "" {
 				select {
 				case ch <- &StreamChunk{
-					Done:         true,
-					FinishReason: cand.FinishReason,
-					InputTokens:  inputTokens,
-					OutputTokens: outputTokens,
-					TokensUsed:   totalTokens,
-					ToolCalls:    toolCalls,
-					CacheUsage:   CacheUsage{ReadTokens: cacheRead},
+					Done:            true,
+					FinishReason:    cand.FinishReason,
+					InputTokens:     inputTokens,
+					OutputTokens:    outputTokens + thoughts,
+					TokensUsed:      inputTokens + outputTokens + thoughts,
+					ReasoningTokens: thoughts,
+					ToolCalls:       toolCalls,
+					CacheUsage:      CacheUsage{ReadTokens: cacheRead},
 				}:
 				case <-ctx.Done():
 				}

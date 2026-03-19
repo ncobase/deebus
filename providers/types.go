@@ -206,29 +206,31 @@ type Request struct {
 
 // Response is the unified non-streaming response.
 type Response struct {
-	Content      string
-	Model        string
-	Provider     string
-	InputTokens  int        // prompt / input tokens
-	OutputTokens int        // completion / output tokens
-	TokensUsed   int        // InputTokens + OutputTokens
-	FinishReason string
-	ToolCalls    []ToolCall
-	CacheUsage   CacheUsage // non-zero when the provider reports cache activity
-	CreatedAt    time.Time
+	Content        string
+	Model          string
+	Provider       string
+	InputTokens    int        // total input tokens (including cache-read and cache-write tokens)
+	OutputTokens   int        // total output tokens (including reasoning/thinking tokens)
+	TokensUsed     int        // InputTokens + OutputTokens
+	ReasoningTokens int       // subset of OutputTokens used for internal reasoning (OpenAI o-series: reasoning_tokens; Gemini thinking: thoughtsTokenCount)
+	FinishReason   string
+	ToolCalls      []ToolCall
+	CacheUsage     CacheUsage // non-zero when the provider reports cache activity
+	CreatedAt      time.Time
 }
 
 // StreamChunk is one piece of a streaming response.
 type StreamChunk struct {
-	Content      string
-	ToolCalls    []ToolCall // populated in the final Done chunk when tools were called
-	Done         bool
-	FinishReason string
-	InputTokens  int        // populated in the final Done chunk when the provider reports it
-	OutputTokens int        // populated in the final Done chunk when the provider reports it
-	TokensUsed   int        // InputTokens + OutputTokens
-	CacheUsage   CacheUsage // populated in the final Done chunk when caching is active
-	Error        error
+	Content         string
+	ToolCalls       []ToolCall // populated in the final Done chunk when tools were called
+	Done            bool
+	FinishReason    string
+	InputTokens     int        // populated in the final Done chunk when the provider reports it
+	OutputTokens    int        // populated in the final Done chunk when the provider reports it
+	TokensUsed      int        // InputTokens + OutputTokens
+	ReasoningTokens int        // subset of OutputTokens used for internal reasoning
+	CacheUsage      CacheUsage // populated in the final Done chunk when caching is active
+	Error           error
 }
 
 // ─── Embed ────────────────────────────────────────────────────────────────────

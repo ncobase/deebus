@@ -139,13 +139,19 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 		}
 	}
 
+	// Anthropic returns input_tokens as only the uncached portion.
+	// True total input = input_tokens + cache_read + cache_creation.
+	totalInput := result.Usage.InputTokens +
+		result.Usage.CacheReadInputTokens +
+		result.Usage.CacheCreationInputTokens
+
 	return &Response{
 		Content:      content,
 		Model:        result.Model,
 		Provider:     p.Name(),
-		InputTokens:  result.Usage.InputTokens,
+		InputTokens:  totalInput,
 		OutputTokens: result.Usage.OutputTokens,
-		TokensUsed:   result.Usage.InputTokens + result.Usage.OutputTokens,
+		TokensUsed:   totalInput + result.Usage.OutputTokens,
 		FinishReason: result.StopReason,
 		ToolCalls:    toolCalls,
 		CacheUsage: CacheUsage{
@@ -334,12 +340,15 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 						toolCalls = append(toolCalls, tc)
 					}
 				}
+				// inputTokens from message_start is only the uncached portion;
+				// add cache buckets for the true total input.
+				totalInput := inputTokens + cacheCreated + cacheRead
 				final := &StreamChunk{
 					Done:         true,
 					FinishReason: stopReason,
-					InputTokens:  inputTokens,
+					InputTokens:  totalInput,
 					OutputTokens: outputTokens,
-					TokensUsed:   inputTokens + outputTokens,
+					TokensUsed:   totalInput + outputTokens,
 					ToolCalls:    toolCalls,
 					CacheUsage: CacheUsage{
 						CreatedTokens: cacheCreated,
