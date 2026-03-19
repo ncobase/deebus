@@ -4,7 +4,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/ncobase/deebus)](https://goreportcard.com/report/github.com/ncobase/deebus)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**deebus** is a zero-dependency AI provider abstraction library for Go. It presents a single, unified interface over multiple large-language-model providers and wraps every call in a production-grade reliability stack: automatic fallback, exponential backoff with jitter, per-provider circuit breaking, token-bucket rate limiting, and structured logging.
+**deebus** is a production-grade AI provider abstraction library for Go. It presents a unified interface over five large-language-model providers, wraps every call in a reliability stack (retry, circuit breaking, rate limiting, fallback), and ships an agentic loop with parallel tool execution and an MCP client for connecting to any Model Context Protocol server.
 
 ---
 
@@ -12,16 +12,20 @@
 
 | Feature | Details |
 |---------|---------|
-| **Multi-provider** | OpenAI, Anthropic (Claude), Google Gemini, Ollama, Cohere |
-| **Smart fallback** | Tries primary → fallbacks in order; skips 400 errors (bad request) |
+| **Multi-provider** | OpenAI, Anthropic, Google Gemini, Ollama, Cohere |
+| **Smart fallback** | Primary → fallbacks in order; HTTP 400 is never retried or fallen back |
 | **Retry with jitter** | Equal-jitter exponential backoff; honours `Retry-After` on 429 |
 | **Circuit breaker** | Closed → Open → Half-open state machine per provider |
 | **Rate limiting** | Continuous token-bucket algorithm per provider |
-| **Structured logging** | Pluggable `Logger` interface; defaults to no-op |
-| **Usage statistics** | Atomic request/token counters via `client.Stats` |
+| **Tool calling** | Function/tool use for all five providers with streaming assembly |
+| **Multi-turn tool calling** | `AssistantMessage` / `ToolResultMessage` with per-provider wire format |
+| **Agent loop** | `RunAgent` / `RunAgentStream` with parallel tool dispatch and event hooks |
+| **MCP client** | Connects to any MCP server via stdio or Streamable HTTP (spec 2025-03-26) |
 | **Streaming** | SSE / NDJSON streaming for all five providers |
-| **Multimodal** | Text, images (URL/base64), audio, PDF documents |
-| **Tool calling** | Function/tool use for OpenAI and Anthropic |
+| **Multimodal** | Text, images (URL / base64), audio, PDF documents |
+| **Embeddings** | OpenAI, Gemini, Ollama, Cohere |
+| **Structured logging** | Pluggable `Logger` interface; defaults to no-op |
+| **Usage statistics** | Atomic request / token counters via `client.Stats` |
 | **Zero dependencies** | Only `gopkg.in/yaml.v3` for config parsing |
 | **Thread-safe** | All public methods are safe for concurrent use |
 
@@ -45,26 +49,26 @@ Requires **Go 1.21** or later.
 providers:
   anthropic:
     type: anthropic
-    apiKey: ${ANTHROPIC_API_KEY}      # expanded from environment
+    apiKey: ${ANTHROPIC_API_KEY}      # expanded from environment at load time
     baseURL: https://api.anthropic.com
   openai:
     type: openai
     apiKey: ${OPENAI_API_KEY}
     baseURL: https://api.openai.com
 
-primary: anthropic/claude-opus-4-6
+primary:   anthropic/claude-opus-4-6
 fallbacks:
   - openai/gpt-4o
 
-timeout: 30        # seconds per request
-retry: 2           # additional attempts on transient errors
-rateLimit: 10      # max requests/second per provider (0 = disabled)
+timeout:   30   # seconds per request
+retry:     2    # additional attempts on transient errors (429, 5xx, network)
+rateLimit: 10   # max requests/second per provider (0 = disabled)
 circuitBreaker:
-  maxFailures: 5   # open circuit after N consecutive failures
-  resetTimeout: 60 # seconds before half-open probe
+  maxFailures:  5   # consecutive failures that open the circuit (0 = disabled)
+  resetTimeout: 60  # seconds before a half-open probe
 ```
 
-`${ENV_VAR}` and `$ENV_VAR` placeholders are expanded before YAML parsing, so API keys are never written in plaintext.
+`${ENV_VAR}` and `$ENV_VAR` placeholders are expanded before YAML parsing; API keys are never written in plaintext.
 
 ### 2. Use the client
 
@@ -112,10 +116,10 @@ func main() {
 |-------|------|---------|-------------|
 | `providers` | map | — | Named provider configurations (see below) |
 | `primary` | string | — | **Required.** Model to try first (`provider/model`) |
-| `fallbacks` | []string | `[]` | Ordered list of fallback models |
+| `fallbacks` | []string | `[]` | Ordered fallback models tried when the primary fails |
 | `timeout` | int | `30` | HTTP request timeout in seconds |
 | `retry` | int | `2` | Additional attempts per provider on transient errors |
-| `rateLimit` | int | `0` | Maximum requests per second per provider (0 = disabled) |
+| `rateLimit` | int | `0` | Max requests per second per provider (0 = disabled) |
 | `circuitBreaker.maxFailures` | int | `0` | Consecutive failures before opening circuit (0 = disabled) |
 | `circuitBreaker.resetTimeout` | int | `60` | Seconds before half-open probe after circuit opens |
 
@@ -125,7 +129,7 @@ func main() {
 |-------|------|----------|-------------|
 | `type` | string | ✓ | One of `openai`, `anthropic`, `gemini`, `ollama`, `cohere` |
 | `apiKey` | string | ✓ * | API key. *Not required for `ollama`. |
-| `baseURL` | string | ✓ | Base URL. Must use `https://` or `http://localhost`/`http://127.0.0.1` |
+| `baseURL` | string | ✓ | Must use `https://` or `http://localhost` / `http://127.0.0.1` / `http://0.0.0.0` |
 
 ### Programmatic configuration
 
@@ -137,21 +141,11 @@ client, err := deebus.NewClient(deebus.Config{
             APIKey:  os.Getenv("ANTHROPIC_API_KEY"),
             BaseURL: "https://api.anthropic.com",
         },
-        "openai": {
-            Type:    "openai",
-            APIKey:  os.Getenv("OPENAI_API_KEY"),
-            BaseURL: "https://api.openai.com",
-        },
     },
     Primary:   "anthropic/claude-opus-4-6",
     Fallbacks: []string{"openai/gpt-4o"},
     Timeout:   30,
     Retry:     2,
-    RateLimit: 10,
-    CircuitBreaker: deebus.CircuitBreakerConfig{
-        MaxFailures:  5,
-        ResetTimeout: 60,
-    },
 })
 ```
 
@@ -159,46 +153,13 @@ client, err := deebus.NewClient(deebus.Config{
 
 ## Provider Compatibility
 
-| Provider | Complete | Stream | Embed | Tool Use | Multimodal |
-|----------|----------|--------|-------|----------|------------|
+| Provider | Complete | Stream | Embed | Tool Calling | Multimodal |
+|----------|:--------:|:------:|:-----:|:------------:|:----------:|
 | **OpenAI** | ✓ | ✓ SSE | ✓ | ✓ | Image, Audio |
 | **Anthropic** | ✓ | ✓ SSE | — | ✓ | Image, PDF |
-| **Gemini** | ✓ | ✓ SSE | — | — | Image |
-| **Ollama** | ✓ | ✓ NDJSON | ✓ | — | — |
-| **Cohere** | ✓ | ✓ SSE | ✓ | — | — |
-
----
-
-## Middleware Pipeline
-
-Every provider is wrapped with the following middleware layers. The stack is constructed automatically by `NewClient`/`LoadConfig`.
-
-```
-Client.Complete(req)
-    │
-    └─ LoggingMiddleware          ← records duration, tokens, errors
-        └─ CircuitBreakerMiddleware ← rejects immediately if provider is down
-            └─ RetryMiddleware     ← retries with exponential back-off + jitter
-                └─ RateLimitMiddleware ← token-bucket throttle
-                    └─ BaseProvider    ← HTTP call to the LLM API
-```
-
-### Retry and Fallback Strategy
-
-The handling of each HTTP status code is deterministic:
-
-| Status | Meaning | Retry same provider | Try next provider |
-|--------|---------|---------------------|-------------------|
-| 400 | Bad Request | No | **No** — request is malformed |
-| 401 / 403 | Auth error | No | Yes — another provider may have valid credentials |
-| 408 / 504 | Timeout | Yes | Yes |
-| 429 | Rate limited | Yes (honours `Retry-After`) | Yes after retries exhausted |
-| 5xx | Server error | Yes | Yes |
-| Network | Connection failure | Yes | Yes |
-
-**Circuit breaker notes:**
-- Auth errors (401/403) and bad requests (400) do **not** count as failures toward the circuit — they are configuration or request issues, not provider health indicators.
-- When the circuit opens, the error returned has `Fallback: true`, so the client immediately moves to the next provider without waiting for a retry cycle.
+| **Gemini** | ✓ | ✓ SSE | ✓ | ✓ | Image |
+| **Ollama** | ✓ | ✓ NDJSON | ✓ | ✓ | — |
+| **Cohere** | ✓ | ✓ SSE | ✓ | ✓ | — |
 
 ---
 
@@ -221,7 +182,7 @@ for chunk := range stream {
     }
     fmt.Print(chunk.Content)
     if chunk.Done {
-        fmt.Printf("\n[finish: %s]\n", chunk.FinishReason)
+        fmt.Printf("\n[finish: %s, tokens: %d]\n", chunk.FinishReason, chunk.TokensUsed)
         break
     }
 }
@@ -232,19 +193,15 @@ for chunk := range stream {
 ## Multimodal Input
 
 ```go
-// Image (URL)
+// Image from URL
 msg := deebus.ImageMessage("user",
     deebus.ImageSource{Type: "url", URL: "https://example.com/photo.jpg"},
     "Describe this image.",
 )
 
-// Image (base64)
+// Image from base64
 msg := deebus.ImageMessage("user",
-    deebus.ImageSource{
-        Type:      "base64",
-        MediaType: "image/jpeg",
-        Data:      base64EncodedBytes,
-    },
+    deebus.ImageSource{Type: "base64", MediaType: "image/jpeg", Data: base64Bytes},
     "What is shown here?",
 )
 
@@ -259,34 +216,236 @@ msg := deebus.DocumentMessage("user", base64PDFData, "application/pdf")
 
 ## Tool Calling
 
+### Single-turn
+
 ```go
-resp, err := client.Complete(ctx, &deebus.Request{
-    Messages: []deebus.Message{
-        deebus.SimpleMessage("user", "What is the weather in Tokyo?"),
-    },
-    Tools: []deebus.Tool{
-        {
-            Type: "function",
-            Function: deebus.FunctionSchema{
-                Name:        "get_weather",
-                Description: "Return current weather for a city",
-                Parameters: map[string]any{
-                    "type": "object",
-                    "properties": map[string]any{
-                        "city": map[string]any{"type": "string"},
-                    },
-                    "required": []string{"city"},
-                },
+tools := []deebus.Tool{{
+    Type: "function",
+    Function: deebus.FunctionSchema{
+        Name:        "get_weather",
+        Description: "Return current weather for a city",
+        Parameters: map[string]any{
+            "type": "object",
+            "properties": map[string]any{
+                "city": map[string]any{"type": "string"},
             },
+            "required": []string{"city"},
         },
     },
-    ToolChoice: "auto",
+}}
+
+resp, err := client.Complete(ctx, &deebus.Request{
+    Messages:   []deebus.Message{deebus.SimpleMessage("user", "Weather in Tokyo?")},
+    Tools:      tools,
+    ToolChoice: "auto", // "auto" | "none" | "required" | specific function name
 })
 
 for _, call := range resp.ToolCalls {
     fmt.Printf("tool=%s args=%s\n", call.Function.Name, call.Function.Arguments)
 }
 ```
+
+### Multi-turn (manual)
+
+```go
+// Build conversation history manually when executing tools yourself.
+messages := []deebus.Message{
+    deebus.SimpleMessage("user", "What is the weather in Tokyo and London?"),
+}
+
+resp, _ := client.Complete(ctx, &deebus.Request{Messages: messages, Tools: tools})
+
+// Append the assistant's tool-call turn.
+messages = append(messages, deebus.AssistantMessage(resp.Content, resp.ToolCalls))
+
+// Execute each tool and append results.
+for _, tc := range resp.ToolCalls {
+    result := executeWeatherTool(tc.Function.Arguments) // your implementation
+    messages = append(messages, deebus.ToolResultMessage(tc.ID, tc.Function.Name, result))
+}
+
+// Continue the conversation.
+final, _ := client.Complete(ctx, &deebus.Request{Messages: messages, Tools: tools})
+fmt.Println(final.Content)
+```
+
+---
+
+## Agent Loop
+
+`RunAgent` and `RunAgentStream` automate the tool-call loop: call the model, execute any tool calls (in parallel by default), feed results back, and repeat until the model returns a final text response or `MaxIterations` is reached.
+
+### Non-streaming
+
+```go
+answer, history, err := client.RunAgent(ctx,
+    &deebus.Request{
+        Messages: []deebus.Message{
+            deebus.SimpleMessage("user", "List the files in /tmp and summarise them."),
+        },
+        Tools: tools,
+    },
+    func(ctx context.Context, name, argsJSON string) (string, error) {
+        // Execute the named tool and return its result as a string.
+        return dispatchTool(name, argsJSON)
+    },
+    deebus.AgentConfig{
+        MaxIterations:      10,    // default: 10
+        DisableParallel:    false, // execute independent tool calls concurrently
+        MaxHistoryMessages: 50,    // trim oldest turns when conversation grows
+        Hook: func(ev deebus.AgentEvent) {
+            // Observe every action in the loop.
+            slog.Info("agent event", "type", ev.Type, "tool", ev.ToolName,
+                "tokens", ev.TokensUsed, "duration", ev.Duration)
+        },
+    },
+)
+```
+
+### Streaming
+
+```go
+histCh := make(chan []deebus.Message, 1)
+
+stream, err := client.RunAgentStream(ctx, req, toolFn, histCh,
+    deebus.AgentConfig{MaxIterations: 10})
+if err != nil {
+    log.Fatal(err)
+}
+
+for chunk := range stream {
+    if chunk.Error != nil {
+        log.Printf("agent error: %v", chunk.Error)
+        break
+    }
+    fmt.Print(chunk.Content)
+}
+
+history := <-histCh // full conversation including all tool turns
+```
+
+### AgentConfig fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `MaxIterations` | int | `10` | Maximum model → tool round-trips |
+| `DisableParallel` | bool | `false` | When `false`, independent tool calls in one turn run concurrently |
+| `Hook` | `func(AgentEvent)` | `nil` | Called synchronously on each observable action |
+| `MaxHistoryMessages` | int | `0` | Trim conversation to at most N messages, preserving system messages |
+
+### AgentEvent types
+
+| Type | When |
+|------|------|
+| `"llm_request"` | Before each model call |
+| `"llm_response"` | After the model responds |
+| `"tool_call"` | Before each tool execution |
+| `"tool_result"` | After a tool returns |
+| `"done"` | Agent produced a final answer |
+| `"error"` | Agent loop terminated with an error |
+
+---
+
+## MCP Client
+
+The `mcp` sub-package implements a client for the [Model Context Protocol](https://modelcontextprotocol.io/) (spec 2025-03-26), enabling agents to use tools exposed by any MCP-compatible server with zero additional dependencies.
+
+### stdio transport (most common)
+
+```go
+import "github.com/ncobase/deebus/mcp"
+
+// Launch a local MCP server as a subprocess.
+mcpClient, err := mcp.NewStdioClient(ctx,
+    "npx", []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp"}, nil)
+if err != nil {
+    log.Fatal(err)
+}
+defer mcpClient.Close()
+
+// Fetch tool schemas (paginated internally, cached, auto-refreshed on list_changed).
+tools, err := mcpClient.Tools(ctx)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Run an agent that calls MCP tools automatically.
+answer, _, err := deebusClient.RunAgent(ctx,
+    &deebus.Request{
+        Messages: []deebus.Message{deebus.SimpleMessage("user", "List files in /tmp")},
+        Tools:    tools,
+    },
+    mcpClient.Execute, // AgentToolFunc-compatible
+)
+fmt.Println(answer)
+```
+
+### HTTP transport (Streamable HTTP, spec 2025-03-26)
+
+```go
+mcpClient, err := mcp.NewHTTPClient(ctx,
+    "https://mcp.example.com/mcp",
+    30*time.Second,
+    mcp.WithNotificationHandler(func(method string, params json.RawMessage) {
+        slog.Info("mcp notification", "method", method)
+    }),
+)
+```
+
+### Calling tools directly
+
+```go
+// Full result with IsError flag.
+result, err := mcpClient.CallTool(ctx, "read_file", `{"path":"/tmp/notes.txt"}`)
+fmt.Printf("isError=%v text=%s\n", result.IsError, result.Text())
+
+// AgentToolFunc-compatible shorthand; IsError is returned as prefixed text,
+// not a Go error, so the model can observe and recover from tool-level failures.
+out, err := mcpClient.Execute(ctx, "read_file", `{"path":"/tmp/notes.txt"}`)
+```
+
+---
+
+## Middleware Pipeline
+
+Every provider is wrapped with the following middleware layers, constructed automatically by `NewClient` / `LoadConfig`.
+
+```
+Client.Complete(req)
+    │
+    └─ LoggingMiddleware           ← records duration, tokens, errors
+        └─ CircuitBreakerMiddleware ← rejects immediately when provider is down
+            └─ RetryMiddleware      ← equal-jitter exponential backoff
+                └─ RateLimitMiddleware ← continuous token-bucket throttle
+                    └─ BaseProvider    ← HTTP call to the LLM API
+```
+
+### Retry and Fallback Strategy
+
+| Status | Retry same provider | Try next fallback |
+|--------|--------------------:|------------------:|
+| 400 Bad Request | No | **No** — request is malformed |
+| 401 / 403 Auth error | No | Yes |
+| 408 / 504 Timeout | Yes | Yes |
+| 429 Rate limited | Yes (honours `Retry-After`) | Yes after retries exhausted |
+| 5xx Server error | Yes | Yes |
+| Network failure | Yes | Yes |
+
+Auth errors (401/403) and bad requests (400) do **not** count as failures toward the circuit breaker.
+
+---
+
+## Embeddings
+
+```go
+resp, err := client.Embed(ctx, &deebus.EmbedRequest{
+    Input:     []string{"The quick brown fox", "Go is fast"},
+    InputType: "search_document", // hint for retrieval-optimised embeddings
+})
+fmt.Printf("%d vectors of dim %d\n", len(resp.Embeddings), len(resp.Embeddings[0]))
+```
+
+Supported by OpenAI, Gemini, Ollama, and Cohere.
 
 ---
 
@@ -295,7 +454,6 @@ for _, call := range resp.ToolCalls {
 Implement the four-method `Logger` interface to plug in any logging backend:
 
 ```go
-// Example: bridge to Go's standard slog (Go 1.21+)
 type SlogAdapter struct{}
 
 func (SlogAdapter) Debug(msg string, fields ...any) { slog.Debug(msg, fields...) }
@@ -306,13 +464,11 @@ func (SlogAdapter) Error(msg string, fields ...any) { slog.Error(msg, fields...)
 client.SetLogger(SlogAdapter{})
 ```
 
-`SetLogger` is safe to call concurrently at any time. The change propagates immediately to every middleware layer.
+`SetLogger` is safe to call concurrently at any time; the change propagates immediately to every middleware layer.
 
 ---
 
 ## Usage Statistics
-
-`client.Stats` is an `*Stats` value that tracks request counts and token usage atomically.
 
 ```go
 total, tokens, success, failed := client.Stats.Get()
@@ -322,34 +478,16 @@ fmt.Printf("requests=%d tokens=%d success=%d failed=%d\n",
 
 ---
 
-## Embeddings
-
-```go
-resp, err := client.Embed(ctx, &deebus.EmbedRequest{
-    Model: "openai/text-embedding-3-small",
-    Input: []string{"The quick brown fox", "Go is fast"},
-})
-if err != nil {
-    log.Fatal(err)
-}
-fmt.Printf("embeddings: %d vectors of dim %d\n",
-    len(resp.Embeddings), len(resp.Embeddings[0]))
-```
-
-Embedding is supported by OpenAI, Ollama, and Cohere. Calling `Embed` on a provider that does not support it returns an error with `Fallback: true`, causing the client to try the next provider automatically.
-
----
-
 ## Error Handling
 
 ```go
 resp, err := client.Complete(ctx, req)
 if err != nil {
     if deebus.IsRetryable(err) {
-        // A transient error on the last attempt — safe to retry from your side
+        // Transient failure on the last attempt — safe to retry from the caller
     }
     if !deebus.IsFallback(err) {
-        // 400 Bad Request — the request itself is malformed; fix it before retrying
+        // HTTP 400 — the request itself is malformed; fix it before retrying
     }
     log.Printf("provider error: %v", err)
 }
@@ -364,32 +502,40 @@ Both helpers walk the error chain, so they work correctly with wrapped errors.
 ```
 github.com/ncobase/deebus
 │
-├── client.go          Client, Config, LoadConfig, NewClient, SetLogger
-├── types.go           Type aliases  (re-exports from providers sub-package)
+├── client.go          Client, Config, LoadConfig, NewClient, Health
+├── agent.go           RunAgent, RunAgentStream, AgentConfig, AgentEvent
+├── types.go           Type aliases (re-exports from providers sub-package)
 ├── errors.go          IsRetryable, IsFallback
 ├── logger.go          Logger interface, NoopLogger, sharedLogger
-├── stats.go           Stats (atomic int64 counters)
+├── stats.go           Stats (atomic counters)
 │
 ├── providers/
 │   ├── types.go       Provider interface, Request, Response, StreamChunk, …
+│   ├── helpers.go     Message constructors, per-provider format converters
 │   ├── error_types.go ProviderError{Retryable, Fallback, RetryAfter}
-│   ├── errors.go      parseError, parseRetryAfter, networkError
-│   ├── helpers.go     SimpleMessage, ImageMessage, format converters
+│   ├── errors.go      parseError, networkError
 │   ├── anthropic.go   Anthropic Messages API
 │   ├── openai.go      OpenAI Chat Completions (and compatible endpoints)
 │   ├── gemini.go      Google Gemini generateContent / streamGenerateContent
-│   ├── ollama.go      Ollama /api/chat  (local models)
+│   ├── ollama.go      Ollama /api/chat (local models)
 │   └── cohere.go      Cohere /v2/chat
+│
+├── mcp/
+│   ├── client.go      MCPClient, NewStdioClient, NewHTTPClient, Tools, Execute
+│   ├── conn.go        JSON-RPC 2.0 request/response correlation
+│   ├── stdio.go       stdio subprocess transport
+│   ├── http.go        Streamable HTTP transport (spec 2025-03-26)
+│   └── types.go       MCP protocol types, tool conversion
 │
 ├── middleware/
 │   ├── logging.go     LoggingMiddleware
-│   ├── retry.go       RetryMiddleware   (equal-jitter exponential backoff)
+│   ├── retry.go       RetryMiddleware (equal-jitter exponential backoff)
 │   ├── ratelimit.go   RateLimitMiddleware (continuous token bucket)
 │   └── circuit.go     CircuitBreakerMiddleware
 │
 └── internal/
-    ├── log/           Shared Logger interface (breaks circular imports)
-    └── circuit/       Circuit breaker state machine (Closed → Open → Half-open)
+    ├── circuit/       Circuit breaker state machine (Closed → Open → Half-open)
+    └── log/           Shared Logger interface (avoids circular imports)
 ```
 
 ---

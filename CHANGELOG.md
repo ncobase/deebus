@@ -7,87 +7,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.0] — 2026-03-19
+
+### Added
+
+- **`mcp` package** — MCP client (Model Context Protocol, spec 2025-03-26) with zero new dependencies.
+  - `NewStdioClient` — launches a subprocess and communicates via stdin/stdout (newline-delimited JSON-RPC 2.0).
+  - `NewHTTPClient` — connects to a remote server via the Streamable HTTP transport; handles JSON and SSE responses, `Mcp-Session-Id` session management, and `DELETE` on close.
+  - `conn` — shared request/response correlation layer (pending map + atomic ID generation, 4 MB scanner buffer for large payloads).
+  - `Client.Tools` — fetches all pages of `tools/list`, converts to `providers.Tool`, caches results, and automatically invalidates the cache when the server sends `notifications/tools/list_changed`.
+  - `Client.Execute` — `AgentToolFunc`-compatible; tool-level `IsError` is returned as prefixed text rather than a Go error, so the model can observe and self-correct.
+  - `Client.CallTool` — returns the full `CallToolResult` for callers that need the `IsError` flag or non-text content items.
+  - `WithNotificationHandler` option for receiving server-initiated notifications.
+- **Agent loop enhancements** (`agent.go`, extracted from `client.go`):
+  - **Parallel tool execution** — when `DisableParallel` is `false` (the default), all tool calls returned in one model response are dispatched concurrently via goroutines + `sync.WaitGroup`; results are collected in original order.
+  - **`AgentConfig.Hook`** — `func(AgentEvent)` callback fired synchronously on every observable action: `llm_request`, `llm_response`, `tool_call`, `tool_result`, `done`, `error`. Includes elapsed `Duration` and `TokensUsed`.
+  - **`AgentConfig.MaxHistoryMessages`** — sliding-window context management; preserves system messages and retains the most recent N non-system messages.
+  - **`AgentConfig.DisableParallel`** — opt-out flag for sequential tool execution.
+  - **`AgentEventType` constants** — `EventLLMRequest`, `EventLLMResponse`, `EventToolCall`, `EventToolResult`, `EventDone`, `EventError`.
+
+### Changed
+
+- Agent code moved from `client.go` to dedicated `agent.go`; `client.go` now contains only client construction and provider dispatch.
+- `applyAgentDefaults` replaces `agentDefaults`; `DisableParallel` bool (opt-out) replaces the earlier `Parallel` bool (opt-in) to work correctly with Go's zero value.
+
+---
+
+## [1.3.0] — 2026-03-19
+
+### Added
+
+- **Full tool calling for all five providers** with streaming assembly.
+  - **OpenAI** — accumulates `tool_calls[index].function.arguments` fragments by index across stream deltas; emits assembled `ToolCalls` in the Done chunk.
+  - **Anthropic** — parses `content_block_start` / `content_block_delta` (`input_json_delta`) / `content_block_stop` events; accumulates per block-index; reports `TokensUsed` from `message_delta`.
+  - **Gemini** — `functionCall` parts parsed in both `Complete` and `Stream`; `TotalTokenCount` mapped to `TokensUsed`.
+  - **Ollama** — `tool_calls` parsed from the done chunk; object arguments marshalled to JSON string.
+  - **Cohere** — `tool-call-start` / `tool-call-delta` / `tool-call-end` accumulation; `message-end` carries `TokensUsed`.
+- **Multi-turn tool calling** — providers now understand `role="tool"` and `role="assistant"+ToolCalls` messages:
+  - `Message.ToolCallID`, `Message.ToolCalls`, `Message.Name` fields added.
+  - `AssistantMessage(content, toolCalls)` and `ToolResultMessage(toolCallID, name, result)` constructors.
+  - `ConvertToOpenAIFormat` — `role="tool"` → flat `{role, tool_call_id, content}`; assistant with tool calls → `{role, tool_calls, content:null}`.
+  - `ConvertToAnthropicFormat` — `role="tool"` → `role="user"` with `tool_result` content block; assistant with tool calls → `tool_use` content array (input as JSON object).
+  - `ConvertToGeminiFormat` — `role="tool"` → `functionResponse` part (parsed JSON or `{result:…}` wrapper); assistant with tool calls → `functionCall` parts.
+  - `cohereMessages` helper for Cohere — `role="tool"` → `{role, tool_call_id, content:[{type:document,…}]}`; assistant with tool calls → `{role, tool_calls, tool_plan}`.
+- **`RunAgent` / `RunAgentStream`** — initial agent loop implementation.
+- **`AssistantMessage` / `ToolResultMessage`** re-exported from root `deebus` package.
+- **`FunctionSchema.Strict`** — OpenAI structured outputs flag.
+- **`StreamChunk.ToolCalls []ToolCall`** — replaces the former `*ToolCall` singular field; populated in the Done chunk when the model called tools.
+- **`StreamChunk.TokensUsed`** — populated in the Done chunk from provider usage data.
+- **`EmbedRequest.InputType`** — passed through to Cohere as `input_type`; mapped to Gemini `taskType`.
+- **Gemini embeddings** — `batchEmbedContents` endpoint; `InputType` mapped to `RETRIEVAL_QUERY`, `RETRIEVAL_DOCUMENT`, `CLASSIFICATION`, `CLUSTERING`.
+- **Anthropic `defaultMaxTokens = 4096`** — replaces the previous 1024 default.
+- **`isAllowedURL`** — added `http://0.0.0.0` for Docker / container environments.
+- **`Config.Validate`** — verifies that every fallback references a configured provider at `NewClient` time.
+- **`Client.Health`** — calls `Health` on all providers; returns `map[string]error`.
+- **`wrapStream`** — captures `TokensUsed` from the Done chunk; records `Stats` on stream end (success or failure).
+
+### Fixed
+
+- `Client.Stream` now records `Stats.RecordRequest(false, 0)` when `Stream` itself errors (not just when a chunk carries an error).
+
+---
+
 ## [1.2.0] — 2026-03-19
 
 ### Added
 
-- **Environment variable expansion** — `LoadConfig` now calls `os.ExpandEnv` before
-  YAML parsing, so `apiKey: ${ANTHROPIC_API_KEY}` works out of the box.
-- **`client.Stats`** — public `*Stats` field on `Client`; updated atomically after
-  every `Complete`, `Stream`, and `Embed` call. `Stats.Get()` returns total
-  requests, total tokens, successes, and failures in one call.
-- **`client.SetLogger`** — replaces the active logger at runtime. Uses a
-  `sharedLogger` wrapper so the change propagates instantly to every middleware
-  layer without rebuilding the provider stack.
-- **`rateLimit` config field** — top-level integer (requests per second per
-  provider). Set to `0` (the default) to disable.
-- **`circuitBreaker` config block** — `maxFailures` and `resetTimeout` fields.
-  Set `maxFailures` to `0` (the default) to disable the circuit breaker.
-- **`internal/circuit` package** — standalone, zero-dependency circuit breaker
-  with a proper Closed → Open → Half-open state machine, configurable
-  `MaxFailures`, `ResetTimeout`, and `HalfOpenRequests`.
-- **`middleware/circuit.go`** — `CircuitBreakerMiddleware` that wraps any
-  `Provider`. Auth and bad-request errors (401/403/400) do not trip the circuit.
-- **`internal/log` package** — shared `Logger` interface that breaks the
-  circular import between `middleware` and the root `deebus` package.
-- **`providers.IsFallback`** — counterpart to `IsRetryable`; reports whether an
-  error should trigger trying the next provider in the fallback chain.
-- **`providers.ProviderError.Fallback`** — new boolean field; `false` only for
-  HTTP 400 (malformed request — no point trying another provider).
-- **`providers.ProviderError.RetryAfter`** — populated from the `Retry-After`
-  response header on 429 responses (both integer-seconds and HTTP-date formats).
-- **`providers.networkError`** — helper that wraps transport-layer errors as a
-  retryable, fallback-eligible `ProviderError`.
+- **Environment variable expansion** — `LoadConfig` calls `os.ExpandEnv` before YAML parsing.
+- **`client.Stats`** — `*Stats` field updated atomically after every `Complete`, `Stream`, and `Embed`. `Stats.Get()` returns totals, tokens, successes, and failures.
+- **`client.SetLogger`** — replaces the active logger at runtime via `sharedLogger`; propagates instantly to every middleware layer.
+- **`rateLimit` config field** — requests per second per provider (0 = disabled).
+- **`circuitBreaker` config block** — `maxFailures` and `resetTimeout`.
+- **`internal/circuit`** — standalone circuit breaker: Closed → Open → Half-open state machine.
+- **`middleware/circuit.go`** — `CircuitBreakerMiddleware`; auth and bad-request errors do not trip the circuit.
+- **`internal/log`** — shared `Logger` interface that breaks the circular import between `middleware` and the root package.
+- **`providers.IsFallback`** — reports whether an error should trigger the next provider.
+- **`providers.ProviderError.Fallback`** — `false` only for HTTP 400.
+- **`providers.ProviderError.RetryAfter`** — populated from `Retry-After` on 429 (integer-seconds and HTTP-date formats).
+- **`providers.networkError`** — wraps transport-layer errors as retryable, fallback-eligible.
 - **Streaming for Gemini** — `streamGenerateContent?alt=sse` SSE endpoint.
 - **Streaming for Ollama** — `/api/chat` NDJSON streaming.
 - **Streaming for Cohere** — `/v2/chat` SSE streaming.
-- **`deebus.AudioMessage` / `deebus.DocumentMessage`** exported from root
-  package (previously only in `providers`).
-- Full `go.sum` file — project now builds without additional steps.
+- **`AudioMessage` / `DocumentMessage`** exported from root package.
 
 ### Changed
 
-- **Middleware stack fully wired** — `NewClient` now constructs a
-  `Logging → CircuitBreaker → Retry → RateLimit → BaseProvider` chain for every
-  provider. Previously the middleware package was dead code.
-- **Retry strategy** — switched from fixed linear sleep to equal-jitter
-  exponential backoff (`base=500ms`, multiplier `2×`, `cap=30s`). The
-  `Retry-After` header on 429 responses overrides the computed delay.
-- **Rate limiter** — replaced the discrete burst-refill implementation with a
-  continuous token-bucket that refills proportionally to elapsed time. Fixed a
-  mutex deadlock in the `acquire` path.
-- **`providers.Config`** — removed unused `Model`, `MaxRetries`, and `CacheTTL`
-  fields. Providers now read the model exclusively from `req.Model`.
-- **`Config.Validate`** — Ollama providers are exempt from the `apiKey`
-  requirement (local service; no authentication needed).
-- **All providers** — use `req.Model` consistently (Ollama and Cohere previously
-  used the stale `config.Model`).
-- **`parseError`** — accepts `http.Header` to extract `Retry-After`; always
-  passes the provider name (was empty string in Anthropic, Gemini, and Ollama).
-- **Root `errors.go`** — removed the unused `deebus.Error` type and duplicate
-  `ErrorType` constants; delegated `IsRetryable` / `IsFallback` to
-  `providers.IsRetryable` / `providers.IsFallback`.
-- **`types.go`** — exports `AudioContent`, `AudioSource`, `DocumentContent`,
-  `DocumentSource`; adds `AudioMessage` and `DocumentMessage` constructors.
-- **`internal/reliability`** — replaced by `internal/circuit` with the correct
-  package declaration (`package circuit`, not `package deebus`).
+- **Middleware stack fully wired** — `NewClient` now builds `Logging → CircuitBreaker → Retry → RateLimit → BaseProvider` for every provider.
+- **Retry strategy** — equal-jitter exponential backoff (`base=500ms`, `cap=30s`); `Retry-After` overrides the computed delay.
+- **Rate limiter** — continuous token-bucket replacing discrete burst-refill; fixed mutex deadlock in `acquire`.
+- **`providers.Config`** — removed unused `Model`, `MaxRetries`, `CacheTTL` fields.
+- **`Config.Validate`** — Ollama exempt from `apiKey` requirement.
 
 ### Fixed
 
-- **`req.Model` data race** — all public `Client` methods now copy the caller's
-  `*Request` before writing `req.Model`, preventing concurrent-use races.
-- **Gemini panic** — `Complete` now guards against an empty `Candidates` slice
-  before indexing; returns a structured error instead of panicking.
-- **Ollama `Embed` context loss** — was calling `http.NewRequestWithContext`
-  with `context.Background()`; now uses the caller's `ctx`.
-- **Stream fallback** — `Client.Stream` now propagates the last error from all
-  providers instead of returning a generic "all providers failed" string.
-- **`internal/reliability` package declaration** — files declared `package
-  deebus` but lived under `internal/reliability/`, causing a misleading
-  import path. Replaced entirely.
-- **Circular import** — `middleware/logging.go` imported the root `deebus`
-  package for its `Logger` type, making it impossible to import `middleware`
-  from `client.go`. Resolved via `internal/log`.
+- `req.Model` data race — all public methods copy the caller's `*Request` before writing `req.Model`.
+- Gemini panic on empty `Candidates` slice.
+- Ollama `Embed` context loss (`context.Background()` → caller's `ctx`).
+- Stream fallback propagated last error correctly.
+- Circular import between `middleware` and root package via `internal/log`.
 
 ---
 
@@ -95,17 +112,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Structured `ProviderError` type with `Retryable` field.
-- Per-provider HTTP error parsing with `parseError`.
+- Structured `ProviderError` with `Retryable` field.
+- Per-provider HTTP error parsing via `parseError`.
 - Exponential backoff retry (1 s → 2 s → 4 s → 8 s).
 - `RateLimitMiddleware` using a token-bucket algorithm.
-- `LoggingMiddleware` with a pluggable `Logger` interface.
+- `LoggingMiddleware` with pluggable `Logger` interface.
 - `Stats` struct for tracking request and token counts.
 
 ### Changed
 
 - Retry strategy upgraded from fixed sleep to exponential backoff.
-- Error messages now include provider name and HTTP status code.
+- Error messages include provider name and HTTP status code.
 
 ---
 
@@ -116,9 +133,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unified `Provider` interface: `Complete`, `Stream`, `Embed`, `Name`, `Health`.
 - Five provider implementations: OpenAI, Anthropic, Gemini, Ollama, Cohere.
 - YAML configuration via `LoadConfig`.
-- Smart primary-plus-fallbacks routing.
-- Multimodal message constructors: `SimpleMessage`, `ImageMessage`,
-  `AudioMessage`, `DocumentMessage`.
+- Primary-plus-fallbacks routing.
+- Multimodal message constructors: `SimpleMessage`, `ImageMessage`, `AudioMessage`, `DocumentMessage`.
 - Streaming (OpenAI SSE, Anthropic SSE).
-- Function/tool calling support (OpenAI, Anthropic).
+- Function/tool calling for OpenAI and Anthropic.
 - Structural circuit breaker (state machine without middleware integration).
