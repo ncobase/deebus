@@ -28,10 +28,44 @@ func NewOllama(cfg Config) *OllamaProvider {
 
 func (p *OllamaProvider) Name() string { return "ollama" }
 
+// convertToOllamaFormat converts messages to Ollama's /api/chat format.
+// Ollama requires content as a plain string, not an array of content blocks.
+// Images are passed via the "images" field as base64 strings.
+func convertToOllamaFormat(messages []Message) []map[string]any {
+	out := make([]map[string]any, 0, len(messages))
+	for _, msg := range messages {
+		m := map[string]any{"role": msg.Role}
+		var images []string
+		var textParts []string
+		for _, block := range msg.Content {
+			switch b := block.(type) {
+			case TextContent:
+				textParts = append(textParts, b.Text)
+			case ImageContent:
+				if b.Source.Type == "base64" {
+					images = append(images, b.Source.Data)
+				}
+			}
+		}
+		m["content"] = strings.Join(textParts, "\n")
+		if len(images) > 0 {
+			m["images"] = images
+		}
+		if msg.ToolCallID != "" {
+			m["tool_call_id"] = msg.ToolCallID
+		}
+		if len(msg.ToolCalls) > 0 {
+			m["tool_calls"] = msg.ToolCalls
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 func (p *OllamaProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
 	body := map[string]any{
 		"model":    req.Model,
-		"messages": ConvertToOpenAIFormat(req.Messages),
+		"messages": convertToOllamaFormat(req.Messages),
 		"stream":   false,
 	}
 	if req.Options != nil {
@@ -119,7 +153,7 @@ func (p *OllamaProvider) Complete(ctx context.Context, req *Request) (*Response,
 func (p *OllamaProvider) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
 	body := map[string]any{
 		"model":    req.Model,
-		"messages": ConvertToOpenAIFormat(req.Messages),
+		"messages": convertToOllamaFormat(req.Messages),
 		"stream":   true,
 	}
 	if req.Options != nil {
@@ -162,6 +196,7 @@ func (p *OllamaProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 			var event struct {
 				Message struct {
 					Content   string `json:"content"`
+					Reasoning string `json:"reasoning"`
 					ToolCalls []struct {
 						Function struct {
 							Name      string         `json:"name"`
@@ -179,9 +214,13 @@ func (p *OllamaProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 				continue
 			}
 
-			if event.Message.Content != "" {
+			text := event.Message.Content
+			if text == "" {
+				text = event.Message.Reasoning
+			}
+			if text != "" {
 				select {
-				case ch <- &StreamChunk{Content: event.Message.Content}:
+				case ch <- &StreamChunk{Content: text}:
 				case <-ctx.Done():
 					return
 				}
