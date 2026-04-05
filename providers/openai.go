@@ -77,7 +77,8 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 		Choices []struct {
 			Message struct {
 				Content          string     `json:"content"`
-				ReasoningContent string     `json:"reasoning_content"`
+				ReasoningContent string     `json:"reasoning_content"` // DeepSeek, vLLM (legacy)
+				Reasoning        string     `json:"reasoning"`         // vLLM (current), some OpenAI-compat
 				ToolCalls        []ToolCall `json:"tool_calls"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
@@ -116,6 +117,9 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 	content := result.Choices[0].Message.Content
 	if strings.TrimSpace(content) == "" {
 		content = result.Choices[0].Message.ReasoningContent
+	}
+	if strings.TrimSpace(content) == "" {
+		content = result.Choices[0].Message.Reasoning
 	}
 
 	return &Response{
@@ -269,7 +273,9 @@ func (p *OpenAIProvider) parseSSEStream(ctx context.Context, r io.Reader) <-chan
 			var chunk struct {
 				Choices []struct {
 					Delta struct {
-						Content   string `json:"content"`
+						Content          string `json:"content"`
+						ReasoningContent string `json:"reasoning_content"`
+						Reasoning        string `json:"reasoning"`
 						ToolCalls []struct {
 							Index    int    `json:"index"`
 							ID       string `json:"id"`
@@ -344,9 +350,16 @@ func (p *OpenAIProvider) parseSSEStream(ctx context.Context, r io.Reader) <-chan
 			}
 
 			// Emit text content chunks as they arrive.
-			if choice.Delta.Content != "" {
+			text := choice.Delta.Content
+			if text == "" {
+				text = choice.Delta.ReasoningContent
+			}
+			if text == "" {
+				text = choice.Delta.Reasoning
+			}
+			if text != "" {
 				select {
-				case ch <- &StreamChunk{Content: choice.Delta.Content}:
+				case ch <- &StreamChunk{Content: text}:
 				case <-ctx.Done():
 					return
 				}
