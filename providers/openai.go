@@ -76,8 +76,9 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 	var result struct {
 		Choices []struct {
 			Message struct {
-				Content   string     `json:"content"`
-				ToolCalls []ToolCall `json:"tool_calls"`
+				Content          string     `json:"content"`
+				ReasoningContent string     `json:"reasoning_content"`
+				ToolCalls        []ToolCall `json:"tool_calls"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -112,8 +113,13 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 		return nil, fmt.Errorf("empty choices in response")
 	}
 
+	content := result.Choices[0].Message.Content
+	if strings.TrimSpace(content) == "" {
+		content = result.Choices[0].Message.ReasoningContent
+	}
+
 	return &Response{
-		Content:         result.Choices[0].Message.Content,
+		Content:         content,
 		Model:           result.Model,
 		Provider:        p.Name(),
 		InputTokens:     result.Usage.PromptTokens,

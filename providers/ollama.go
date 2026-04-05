@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -68,6 +69,7 @@ func (p *OllamaProvider) Complete(ctx context.Context, req *Request) (*Response,
 	var result struct {
 		Message struct {
 			Content   string `json:"content"`
+			Reasoning string `json:"reasoning"`
 			ToolCalls []struct {
 				Function struct {
 					Name      string         `json:"name"`
@@ -85,6 +87,11 @@ func (p *OllamaProvider) Complete(ctx context.Context, req *Request) (*Response,
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
+	content := result.Message.Content
+	if strings.TrimSpace(content) == "" {
+		content = result.Message.Reasoning
+	}
+
 	var toolCalls []ToolCall
 	for _, otc := range result.Message.ToolCalls {
 		args, _ := json.Marshal(otc.Function.Arguments)
@@ -95,7 +102,7 @@ func (p *OllamaProvider) Complete(ctx context.Context, req *Request) (*Response,
 	}
 
 	return &Response{
-		Content:      result.Message.Content,
+		Content:      content,
 		Model:        result.Model,
 		Provider:     p.Name(),
 		InputTokens:  result.PromptEvalCount,

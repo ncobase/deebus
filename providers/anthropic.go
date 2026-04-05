@@ -122,11 +122,14 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 	}
 
 	content := ""
+	thinking := ""
 	var toolCalls []ToolCall
 	for _, block := range result.Content {
 		switch block.Type {
 		case "text":
 			content = block.Text
+		case "thinking":
+			thinking = block.Text
 		case "tool_use":
 			args, _ := json.Marshal(block.Input)
 			tc := ToolCall{
@@ -137,6 +140,9 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 			tc.Function.Arguments = string(args)
 			toolCalls = append(toolCalls, tc)
 		}
+	}
+	if strings.TrimSpace(content) == "" && thinking != "" {
+		content = thinking
 	}
 
 	// Anthropic returns input_tokens as only the uncached portion.
