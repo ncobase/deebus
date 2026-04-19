@@ -10,8 +10,6 @@ import (
 	"github.com/ncobase/deebus/providers"
 )
 
-// ─── Transport interface ──────────────────────────────────────────────────────
-
 // transport is the internal interface implemented by stdioTransport and
 // httpTransport. It is not exported; callers use Client directly.
 type transport interface {
@@ -21,11 +19,8 @@ type transport interface {
 	close() error
 }
 
-// ─── Client ───────────────────────────────────────────────────────────────────
-
 // Client is an MCP client. Create one via NewStdioClient or NewHTTPClient,
 // then use Tools to fetch tool definitions and Execute to run tool calls.
-//
 // Client is safe for concurrent use after initialization.
 type Client struct {
 	t          transport
@@ -33,7 +28,7 @@ type Client struct {
 	serverCaps ServerCapabilities
 
 	toolsMu    sync.RWMutex
-	toolsCache []Tool       // refreshed on tools/list_changed notifications
+	toolsCache []Tool // refreshed on tools/list_changed notifications
 	toolsDirty bool
 }
 
@@ -97,13 +92,8 @@ func newClient(ctx context.Context, t transport, extraNotify func(string, json.R
 	return c, nil
 }
 
-// ─── Constructors ─────────────────────────────────────────────────────────────
-
 // NewStdioClient launches command with args and env appended to the current
 // environment, performs the MCP handshake, and returns a ready Client.
-//
-//	c, err := mcp.NewStdioClient(ctx, "npx",
-//	    []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp"}, nil)
 func NewStdioClient(ctx context.Context, command string, args, env []string, opts ...ClientOption) (*Client, error) {
 	t, err := newStdioTransport(ctx, command, args, env)
 	if err != nil {
@@ -128,8 +118,6 @@ func resolveOptions(opts []ClientOption) func(string, json.RawMessage) {
 	}
 	return o.extraNotify
 }
-
-// ─── Tool operations ──────────────────────────────────────────────────────────
 
 // Tools fetches all tool definitions from the server (paginated internally)
 // and returns them converted to the deebus providers.Tool format.
@@ -248,8 +236,6 @@ func (c *Client) ServerCapabilities() ServerCapabilities { return c.serverCaps }
 func (c *Client) Close() error {
 	return c.t.close()
 }
-
-// ─── Conversion ───────────────────────────────────────────────────────────────
 
 // mcpToolsToProviders converts MCP tool definitions to the unified
 // providers.Tool format expected by deebus requests.

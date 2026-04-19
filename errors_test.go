@@ -34,30 +34,30 @@ func TestIsRetryable(t *testing.T) {
 }
 
 func TestIsFallback(t *testing.T) {
-	// Bad request — should NOT fallback
+	// Bad request - should NOT fallback
 	badReq := &providers.ProviderError{
-		Type:      providers.ErrTypeInvalidReq,
-		Provider:  "openai",
+		Type:       providers.ErrTypeInvalidReq,
+		Provider:   "openai",
 		StatusCode: 400,
-		Message:   "bad request",
-		Fallback:  false,
+		Message:    "bad request",
+		Fallback:   false,
 	}
 	if IsFallback(badReq) {
 		t.Error("400 bad request should not trigger fallback")
 	}
 
-	// Auth error — should fallback (try another provider)
+	// Auth error - should fallback (try another provider)
 	authErr := &providers.ProviderError{
-		Type:      providers.ErrTypeAuth,
-		Provider:  "openai",
+		Type:       providers.ErrTypeAuth,
+		Provider:   "openai",
 		StatusCode: 401,
-		Fallback:  true,
+		Fallback:   true,
 	}
 	if !IsFallback(authErr) {
 		t.Error("auth error should trigger fallback")
 	}
 
-	// Generic Go error — should always fallback
+	// Generic Go error - should always fallback
 	if !IsFallback(errors.New("connection refused")) {
 		t.Error("network error should trigger fallback")
 	}

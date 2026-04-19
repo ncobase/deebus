@@ -39,6 +39,9 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 			"parts": []map[string]any{{"text": system}},
 		}
 	}
+	if req.Cache != nil && req.Cache.CachedContent != "" {
+		body["cachedContent"] = req.Cache.CachedContent
+	}
 
 	if req.Temperature > 0 || req.MaxTokens > 0 {
 		gc := map[string]any{}
@@ -63,13 +66,18 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	url := p.geminiURL(fmt.Sprintf("/v1beta/models/%s:generateContent", req.Model), "")
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+
+	url := p.geminiURL(creds, fmt.Sprintf("/v1beta/models/%s:generateContent", req.Model), "")
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	p.setHeaders(httpReq)
+	p.setHeaders(httpReq, creds)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -165,6 +173,9 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 			"parts": []map[string]any{{"text": system}},
 		}
 	}
+	if req.Cache != nil && req.Cache.CachedContent != "" {
+		body["cachedContent"] = req.Cache.CachedContent
+	}
 
 	if req.Temperature > 0 || req.MaxTokens > 0 {
 		gc := map[string]any{}
@@ -189,13 +200,18 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	url := p.geminiURL(fmt.Sprintf("/v1beta/models/%s:streamGenerateContent", req.Model), "alt=sse")
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+
+	url := p.geminiURL(creds, fmt.Sprintf("/v1beta/models/%s:streamGenerateContent", req.Model), "alt=sse")
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	p.setHeaders(httpReq)
+	p.setHeaders(httpReq, creds)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -330,13 +346,18 @@ func (p *GeminiProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	url := p.geminiURL(fmt.Sprintf("/v1beta/models/%s:batchEmbedContents", req.Model), "")
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+
+	url := p.geminiURL(creds, fmt.Sprintf("/v1beta/models/%s:batchEmbedContents", req.Model), "")
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	p.setHeaders(httpReq)
+	p.setHeaders(httpReq, creds)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -372,19 +393,28 @@ func (p *GeminiProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 
 func (p *GeminiProvider) Health(_ context.Context) error { return nil }
 
-func (p *GeminiProvider) setHeaders(r *http.Request) {
+func (p *GeminiProvider) setHeaders(r *http.Request, creds Credentials) {
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+	switch {
+	case creds.BearerToken != "":
+		r.Header.Set("Authorization", "Bearer "+creds.BearerToken)
+	case creds.APIKey != "" && !strings.Contains(p.cfg.BaseURL, "googleapis.com"):
+		r.Header.Set("Authorization", "Bearer "+creds.APIKey)
+	}
+	if creds.UserProject != "" {
+		r.Header.Set("x-goog-user-project", creds.UserProject)
+	}
+	applyHeaders(r, creds.Headers)
 }
 
 // geminiURL builds an endpoint URL for the Gemini provider.
 // For the native Google API (googleapis.com) the key is passed as a query
 // parameter (?key=); for all other base URLs the key is omitted from the URL
 // and authentication relies on the Authorization: Bearer header instead.
-func (p *GeminiProvider) geminiURL(path, extraQuery string) string {
+func (p *GeminiProvider) geminiURL(creds Credentials, path, extraQuery string) string {
 	base := p.cfg.BaseURL + path
-	if strings.Contains(p.cfg.BaseURL, "googleapis.com") {
-		q := "key=" + p.cfg.APIKey
+	if strings.Contains(p.cfg.BaseURL, "googleapis.com") && creds.BearerToken == "" && creds.APIKey != "" {
+		q := "key=" + creds.APIKey
 		if extraQuery != "" {
 			q += "&" + extraQuery
 		}

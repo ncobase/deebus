@@ -49,6 +49,18 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 	if req.UserID != "" {
 		body["user"] = req.UserID
 	}
+	if req.Cache != nil {
+		if req.Cache.Key != "" {
+			body["prompt_cache_key"] = req.Cache.Key
+		}
+		retention, err := normalizeOpenAICacheRetention(req.Cache.Retention)
+		if err != nil {
+			return nil, err
+		}
+		if retention != "" {
+			body["prompt_cache_retention"] = retention
+		}
+	}
 
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -60,7 +72,11 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	p.setHeaders(httpReq)
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -84,9 +100,9 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
+			PromptTokens        int `json:"prompt_tokens"`
+			CompletionTokens    int `json:"completion_tokens"`
+			TotalTokens         int `json:"total_tokens"`
 			PromptTokensDetails struct {
 				CachedTokens int `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
@@ -174,10 +190,10 @@ func (p *OpenAIProvider) completeFromSSE(ctx context.Context, req *Request, body
 
 func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
 	body := map[string]any{
-		"model":             req.Model,
-		"messages":          ConvertToOpenAIFormat(req.Messages),
-		"stream":            true,
-		"stream_options":    map[string]any{"include_usage": true},
+		"model":          req.Model,
+		"messages":       ConvertToOpenAIFormat(req.Messages),
+		"stream":         true,
+		"stream_options": map[string]any{"include_usage": true},
 	}
 	if req.MaxTokens > 0 {
 		body["max_tokens"] = req.MaxTokens
@@ -194,6 +210,18 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 	if req.UserID != "" {
 		body["user"] = req.UserID
 	}
+	if req.Cache != nil {
+		if req.Cache.Key != "" {
+			body["prompt_cache_key"] = req.Cache.Key
+		}
+		retention, err := normalizeOpenAICacheRetention(req.Cache.Retention)
+		if err != nil {
+			return nil, err
+		}
+		if retention != "" {
+			body["prompt_cache_retention"] = retention
+		}
+	}
 
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -205,7 +233,11 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	p.setHeaders(httpReq)
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -276,7 +308,7 @@ func (p *OpenAIProvider) parseSSEStream(ctx context.Context, r io.Reader) <-chan
 						Content          string `json:"content"`
 						ReasoningContent string `json:"reasoning_content"`
 						Reasoning        string `json:"reasoning"`
-						ToolCalls []struct {
+						ToolCalls        []struct {
 							Index    int    `json:"index"`
 							ID       string `json:"id"`
 							Type     string `json:"type"`
@@ -290,9 +322,9 @@ func (p *OpenAIProvider) parseSSEStream(ctx context.Context, r io.Reader) <-chan
 				} `json:"choices"`
 				// Usage chunk emitted by stream_options.include_usage=true.
 				Usage *struct {
-					PromptTokens     int `json:"prompt_tokens"`
-					CompletionTokens int `json:"completion_tokens"`
-					TotalTokens      int `json:"total_tokens"`
+					PromptTokens        int `json:"prompt_tokens"`
+					CompletionTokens    int `json:"completion_tokens"`
+					TotalTokens         int `json:"total_tokens"`
 					PromptTokensDetails struct {
 						CachedTokens int `json:"cached_tokens"`
 					} `json:"prompt_tokens_details"`
@@ -438,7 +470,11 @@ func (p *OpenAIProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	p.setHeaders(httpReq)
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -477,9 +513,34 @@ func (p *OpenAIProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 	}, nil
 }
 
+func normalizeOpenAICacheRetention(retention string) (string, error) {
+	switch retention {
+	case "":
+		return "", nil
+	case "in_memory", "in-memory":
+		return "in_memory", nil
+	case "24h":
+		return "24h", nil
+	default:
+		return "", fmt.Errorf("invalid OpenAI prompt cache retention %q: want in_memory or 24h", retention)
+	}
+}
+
 func (p *OpenAIProvider) Health(_ context.Context) error { return nil }
 
-func (p *OpenAIProvider) setHeaders(r *http.Request) {
+func (p *OpenAIProvider) setHeaders(r *http.Request, creds Credentials) {
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+	switch {
+	case creds.BearerToken != "":
+		r.Header.Set("Authorization", "Bearer "+creds.BearerToken)
+	case creds.APIKey != "":
+		r.Header.Set("Authorization", "Bearer "+creds.APIKey)
+	}
+	if creds.Organization != "" {
+		r.Header.Set("OpenAI-Organization", creds.Organization)
+	}
+	if creds.Project != "" {
+		r.Header.Set("OpenAI-Project", creds.Project)
+	}
+	applyHeaders(r, creds.Headers)
 }

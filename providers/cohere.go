@@ -42,7 +42,7 @@ func (p *CohereProvider) Complete(ctx context.Context, req *Request) (*Response,
 		body["temperature"] = req.Temperature
 	}
 	if len(req.Tools) > 0 {
-		// Cohere v2 uses standard JSON Schema format — same as our unified Tool type.
+		// Cohere v2 uses standard JSON Schema format - same as our unified Tool type.
 		body["tools"] = req.Tools
 	}
 
@@ -56,7 +56,11 @@ func (p *CohereProvider) Complete(ctx context.Context, req *Request) (*Response,
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	p.setHeaders(httpReq)
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -155,7 +159,11 @@ func (p *CohereProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	p.setHeaders(httpReq)
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -175,10 +183,10 @@ func (p *CohereProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 
 		// Accumulates streaming tool-call argument fragments by index.
 		type tcAccumulator struct {
-			id       string
-			typ      string
-			name     string
-			argsBuf  strings.Builder
+			id      string
+			typ     string
+			name    string
+			argsBuf strings.Builder
 		}
 		accumulators := map[int]*tcAccumulator{}
 
@@ -298,7 +306,11 @@ func (p *CohereProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	p.setHeaders(httpReq)
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -333,9 +345,15 @@ func (p *CohereProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 
 func (p *CohereProvider) Health(_ context.Context) error { return nil }
 
-func (p *CohereProvider) setHeaders(r *http.Request) {
+func (p *CohereProvider) setHeaders(r *http.Request, creds Credentials) {
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+	switch {
+	case creds.BearerToken != "":
+		r.Header.Set("Authorization", "Bearer "+creds.BearerToken)
+	case creds.APIKey != "":
+		r.Header.Set("Authorization", "Bearer "+creds.APIKey)
+	}
+	applyHeaders(r, creds.Headers)
 }
 
 // cohereMessages converts the unified message slice to Cohere's v2 chat format.

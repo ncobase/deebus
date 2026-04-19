@@ -3,8 +3,8 @@
 // MCP-compatible server.
 //
 // Supported transports:
-//   - stdio   — launches a local subprocess (most common for CLI tools)
-//   - HTTP    — connects to a remote server via Streamable HTTP (spec 2025-03-26)
+// - stdio   - launches a local subprocess (most common for CLI tools)
+// - HTTP    - connects to a remote server via Streamable HTTP (spec 2025-03-26)
 //
 // Quick start:
 //
@@ -22,15 +22,14 @@ import (
 	"strings"
 )
 
-// ─── JSON-RPC 2.0 ─────────────────────────────────────────────────────────────
-
+// JSON-RPC 2.0
 const jsonrpcVersion = "2.0"
 
 // rpcMessage is a unified JSON-RPC 2.0 message. The fields present determine
 // the message type:
-//   - Request:      id != 0, method != ""
-//   - Response:     id != 0, method == ""
-//   - Notification: id == 0, method != ""
+// - Request:      id != 0, method != ""
+// - Response:     id != 0, method == ""
+// - Notification: id == 0, method != ""
 type rpcMessage struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      int64           `json:"id,omitempty"`
@@ -50,8 +49,6 @@ type rpcError struct {
 func (e *rpcError) Error() string {
 	return fmt.Sprintf("mcp: rpc error %d: %s", e.Code, e.Message)
 }
-
-// ─── MCP protocol types ───────────────────────────────────────────────────────
 
 // ProtocolVersion is the MCP spec version this client targets.
 const ProtocolVersion = "2025-03-26"
@@ -98,13 +95,11 @@ type initializeResult struct {
 	Instructions    string             `json:"instructions,omitempty"`
 }
 
-// ─── Tool types ───────────────────────────────────────────────────────────────
-
 // Tool is an MCP tool definition as returned by tools/list.
 type Tool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"inputSchema"`
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	InputSchema json.RawMessage  `json:"inputSchema"`
 	Annotations *ToolAnnotations `json:"annotations,omitempty"`
 }
 

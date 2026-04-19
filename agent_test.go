@@ -10,8 +10,6 @@ import (
 	"github.com/ncobase/deebus/providers"
 )
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 // agentMockProvider is a Provider that returns scripted responses for agent tests.
 type agentMockProvider struct {
 	responses []providers.Response // returned in order; last is repeated
@@ -56,7 +54,7 @@ func (p *agentMockProvider) Embed(_ context.Context, _ *providers.EmbedRequest) 
 	return nil, errors.New("not implemented")
 }
 
-func (p *agentMockProvider) Name() string               { return "mock" }
+func (p *agentMockProvider) Name() string                   { return "mock" }
 func (p *agentMockProvider) Health(_ context.Context) error { return nil }
 
 // toolCall constructs a ToolCall.
@@ -85,8 +83,6 @@ func buildTestClient(t *testing.T, mock *agentMockProvider) *Client {
 	c.providers["mock"] = mock
 	return c
 }
-
-// ─── trimHistory tests ────────────────────────────────────────────────────────
 
 func TestTrimHistoryNoOp(t *testing.T) {
 	msgs := []providers.Message{
@@ -130,8 +126,6 @@ func TestTrimHistoryNoSystem(t *testing.T) {
 		t.Errorf("got %d messages, want 4", len(got))
 	}
 }
-
-// ─── dispatchTools tests ──────────────────────────────────────────────────────
 
 func TestDispatchToolsSequential(t *testing.T) {
 	calls := []providers.ToolCall{
@@ -195,8 +189,6 @@ func TestDispatchToolsError(t *testing.T) {
 	}
 }
 
-// ─── RunAgent tests ───────────────────────────────────────────────────────────
-
 func TestRunAgentNoTools(t *testing.T) {
 	mock := &agentMockProvider{
 		responses: []providers.Response{
@@ -256,7 +248,7 @@ func TestRunAgentOneTurn(t *testing.T) {
 }
 
 func TestRunAgentMaxIterations(t *testing.T) {
-	// Model always returns a tool call → should exhaust MaxIterations.
+	// Model always returns a tool call -> should exhaust MaxIterations.
 	mock := &agentMockProvider{
 		responses: []providers.Response{
 			{ToolCalls: []providers.ToolCall{toolCall("tc1", "loop", `{}`)}},
@@ -325,8 +317,6 @@ func TestRunAgentHook(t *testing.T) {
 		}
 	}
 }
-
-// ─── RunAgentStream tests ─────────────────────────────────────────────────────
 
 func TestRunAgentStreamNoTools(t *testing.T) {
 	mock := &agentMockProvider{

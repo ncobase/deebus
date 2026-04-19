@@ -96,6 +96,126 @@ func (m *RetryMiddleware) Health(ctx context.Context) error {
 	return m.provider.Health(ctx)
 }
 
+func (m *RetryMiddleware) CreateCache(ctx context.Context, req *providers.CreateCacheRequest) (*providers.Cache, error) {
+	cp, err := cacheProvider(m.provider)
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for attempt := 0; attempt <= m.maxRetries; attempt++ {
+		resp, err := cp.CreateCache(ctx, req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !providers.IsRetryable(err) {
+			return nil, err
+		}
+		if attempt < m.maxRetries {
+			if err := sleepWithContext(ctx, m.backoff(attempt, retryAfter(err))); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return nil, lastErr
+}
+
+func (m *RetryMiddleware) GetCache(ctx context.Context, name string) (*providers.Cache, error) {
+	cp, err := cacheProvider(m.provider)
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for attempt := 0; attempt <= m.maxRetries; attempt++ {
+		resp, err := cp.GetCache(ctx, name)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !providers.IsRetryable(err) {
+			return nil, err
+		}
+		if attempt < m.maxRetries {
+			if err := sleepWithContext(ctx, m.backoff(attempt, retryAfter(err))); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return nil, lastErr
+}
+
+func (m *RetryMiddleware) ListCaches(ctx context.Context, req *providers.ListCachesRequest) (*providers.ListCachesResponse, error) {
+	cp, err := cacheProvider(m.provider)
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for attempt := 0; attempt <= m.maxRetries; attempt++ {
+		resp, err := cp.ListCaches(ctx, req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !providers.IsRetryable(err) {
+			return nil, err
+		}
+		if attempt < m.maxRetries {
+			if err := sleepWithContext(ctx, m.backoff(attempt, retryAfter(err))); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return nil, lastErr
+}
+
+func (m *RetryMiddleware) UpdateCache(ctx context.Context, req *providers.UpdateCacheRequest) (*providers.Cache, error) {
+	cp, err := cacheProvider(m.provider)
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for attempt := 0; attempt <= m.maxRetries; attempt++ {
+		resp, err := cp.UpdateCache(ctx, req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !providers.IsRetryable(err) {
+			return nil, err
+		}
+		if attempt < m.maxRetries {
+			if err := sleepWithContext(ctx, m.backoff(attempt, retryAfter(err))); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return nil, lastErr
+}
+
+func (m *RetryMiddleware) DeleteCache(ctx context.Context, name string) error {
+	cp, err := cacheProvider(m.provider)
+	if err != nil {
+		return err
+	}
+	var lastErr error
+	for attempt := 0; attempt <= m.maxRetries; attempt++ {
+		err := cp.DeleteCache(ctx, name)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !providers.IsRetryable(err) {
+			return err
+		}
+		if attempt < m.maxRetries {
+			if err := sleepWithContext(ctx, m.backoff(attempt, retryAfter(err))); err != nil {
+				return err
+			}
+		}
+	}
+	return lastErr
+}
+
 // backoff computes the wait duration for a given attempt number using equal
 // jitter: delay = cap/2 + random(0, cap/2), where cap = base * 2^attempt.
 // If the server provided a Retry-After hint, that takes precedence.

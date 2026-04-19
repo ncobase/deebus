@@ -2,12 +2,22 @@ package deebus
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 )
 
-// ─── parseModel ───────────────────────────────────────────────────────────────
+type testCredentialProvider struct {
+	creds Credentials
+	err   error
+}
+
+func (p testCredentialProvider) Credentials(context.Context) (Credentials, error) {
+	return p.creds, p.err
+}
 
 func TestParseModel(t *testing.T) {
 	tests := []struct {
@@ -43,8 +53,6 @@ func TestParseModel(t *testing.T) {
 	}
 }
 
-// ─── Config.Validate ──────────────────────────────────────────────────────────
-
 func TestConfigValidate(t *testing.T) {
 	validBase := Config{
 		Primary: "openai/gpt-4o",
@@ -63,9 +71,32 @@ func TestConfigValidate(t *testing.T) {
 		{"no providers", func(c *Config) { c.Providers = nil }, true},
 		{"missing type", func(c *Config) { c.Providers["openai"] = ProviderConfig{APIKey: "k", BaseURL: "https://x.com"} }, true},
 		{"missing apiKey", func(c *Config) { c.Providers["openai"] = ProviderConfig{Type: "openai", BaseURL: "https://x.com"} }, true},
-		{"insecure http URL", func(c *Config) { c.Providers["openai"] = ProviderConfig{Type: "openai", APIKey: "k", BaseURL: "http://api.openai.com"} }, true},
-		{"localhost http allowed", func(c *Config) { c.Providers["openai"] = ProviderConfig{Type: "openai", APIKey: "k", BaseURL: "http://localhost:11434"} }, false},
-		{"0.0.0.0 allowed for Docker", func(c *Config) { c.Providers["openai"] = ProviderConfig{Type: "openai", APIKey: "k", BaseURL: "http://0.0.0.0:11434"} }, false},
+		{"bearer token accepted", func(c *Config) {
+			c.Providers["openai"] = ProviderConfig{Type: "openai", BearerToken: "tok", BaseURL: "https://x.com"}
+		}, false},
+		{"headers accepted", func(c *Config) {
+			c.Providers["openai"] = ProviderConfig{
+				Type:    "openai",
+				BaseURL: "https://x.com",
+				Headers: map[string]string{"Authorization": "Bearer tok"},
+			}
+		}, false},
+		{"credential provider accepted", func(c *Config) {
+			c.Providers["openai"] = ProviderConfig{
+				Type:               "openai",
+				BaseURL:            "https://x.com",
+				CredentialProvider: testCredentialProvider{creds: Credentials{BearerToken: "tok"}},
+			}
+		}, false},
+		{"insecure http URL", func(c *Config) {
+			c.Providers["openai"] = ProviderConfig{Type: "openai", APIKey: "k", BaseURL: "http://api.openai.com"}
+		}, true},
+		{"localhost http allowed", func(c *Config) {
+			c.Providers["openai"] = ProviderConfig{Type: "openai", APIKey: "k", BaseURL: "http://localhost:11434"}
+		}, false},
+		{"0.0.0.0 allowed for Docker", func(c *Config) {
+			c.Providers["openai"] = ProviderConfig{Type: "openai", APIKey: "k", BaseURL: "http://0.0.0.0:11434"}
+		}, false},
 		{"ollama no apikey ok", func(c *Config) {
 			c.Providers["local"] = ProviderConfig{Type: "ollama", BaseURL: "http://localhost:11434"}
 		}, false},
@@ -93,8 +124,6 @@ func TestConfigValidate(t *testing.T) {
 		})
 	}
 }
-
-// ─── NewClient ────────────────────────────────────────────────────────────────
 
 func TestNewClientDefaults(t *testing.T) {
 	cfg := Config{
@@ -135,8 +164,6 @@ func TestNewClientCircuitBreakerDefault(t *testing.T) {
 	}
 }
 
-// ─── SetLogger ────────────────────────────────────────────────────────────────
-
 func TestSetLogger(t *testing.T) {
 	c, _ := NewClient(Config{
 		Primary: "openai/gpt-4o",
@@ -162,11 +189,13 @@ func TestSetLogger(t *testing.T) {
 type testLogger struct{ onInfo func() }
 
 func (l testLogger) Debug(string, ...any) {}
-func (l testLogger) Info(string, ...any)  { if l.onInfo != nil { l.onInfo() } }
+func (l testLogger) Info(string, ...any) {
+	if l.onInfo != nil {
+		l.onInfo()
+	}
+}
 func (l testLogger) Warn(string, ...any)  {}
 func (l testLogger) Error(string, ...any) {}
-
-// ─── Stats ────────────────────────────────────────────────────────────────────
 
 func TestStatsRecording(t *testing.T) {
 	c, _ := NewClient(Config{
@@ -186,8 +215,6 @@ func TestStatsRecording(t *testing.T) {
 		t.Error("Stats.TotalRequests should have been incremented")
 	}
 }
-
-// ─── Concurrent access ────────────────────────────────────────────────────────
 
 func TestClientConcurrency(t *testing.T) {
 	c, err := NewClient(Config{
@@ -222,8 +249,6 @@ func TestClientConcurrency(t *testing.T) {
 	}
 }
 
-// ─── Health ────────────────────────────────────────────────────────────────────
-
 func TestClientHealth(t *testing.T) {
 	c, err := NewClient(Config{
 		Primary: "openai/gpt-4o",
@@ -241,8 +266,6 @@ func TestClientHealth(t *testing.T) {
 	}
 }
 
-// ─── Fallback validation ───────────────────────────────────────────────────────
-
 func TestFallbackValidation(t *testing.T) {
 	// Fallback referencing a provider not in the providers map.
 	_, err := NewClient(Config{
@@ -256,8 +279,6 @@ func TestFallbackValidation(t *testing.T) {
 		t.Error("expected error for fallback referencing unconfigured provider")
 	}
 }
-
-// ─── Stream stats ──────────────────────────────────────────────────────────────
 
 func TestStreamStatsRecordedOnFailure(t *testing.T) {
 	c, _ := NewClient(Config{
@@ -275,5 +296,112 @@ func TestStreamStatsRecordedOnFailure(t *testing.T) {
 	total, _, _, _, _ := c.Stats.Get()
 	if total == 0 {
 		t.Error("Stats must be incremented even when Stream returns an error")
+	}
+}
+
+func TestClientCacheManagementGemini(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1beta/cachedContents":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"name":       "cachedContents/demo",
+				"model":      "models/gemini-2.5-flash",
+				"createTime": "2026-04-19T12:00:00Z",
+				"updateTime": "2026-04-19T12:00:00Z",
+				"expireTime": "2026-04-19T12:05:00Z",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta/cachedContents/demo":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"name":       "cachedContents/demo",
+				"model":      "models/gemini-2.5-flash",
+				"createTime": "2026-04-19T12:00:00Z",
+				"updateTime": "2026-04-19T12:00:00Z",
+				"expireTime": "2026-04-19T12:05:00Z",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta/cachedContents":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"cachedContents": []map[string]any{
+					{
+						"name":       "cachedContents/demo",
+						"model":      "models/gemini-2.5-flash",
+						"createTime": "2026-04-19T12:00:00Z",
+						"updateTime": "2026-04-19T12:00:00Z",
+						"expireTime": "2026-04-19T12:05:00Z",
+					},
+				},
+			})
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1beta/cachedContents/demo":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"name":       "cachedContents/demo",
+				"model":      "models/gemini-2.5-flash",
+				"createTime": "2026-04-19T12:00:00Z",
+				"updateTime": "2026-04-19T12:01:00Z",
+				"expireTime": "2026-04-19T12:10:00Z",
+			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1beta/cachedContents/demo":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(Config{
+		Primary: "gemini/gemini-2.5-flash",
+		Providers: map[string]ProviderConfig{
+			"gemini": {Type: "gemini", APIKey: "sk-test", BaseURL: srv.URL},
+		},
+		Retry: 0,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	ctx := context.Background()
+
+	created, err := c.CreateCache(ctx, "gemini", &CreateCacheRequest{
+		Model:    "gemini-2.5-flash",
+		Messages: []Message{TextMessage("user", "hello")},
+	})
+	if err != nil {
+		t.Fatalf("CreateCache: %v", err)
+	}
+	if created.Name != "cachedContents/demo" {
+		t.Fatalf("CreateCache.Name = %q, want cachedContents/demo", created.Name)
+	}
+
+	if _, err := c.GetCache(ctx, "gemini", "cachedContents/demo"); err != nil {
+		t.Fatalf("GetCache: %v", err)
+	}
+	if _, err := c.ListCaches(ctx, "gemini", nil); err != nil {
+		t.Fatalf("ListCaches: %v", err)
+	}
+	if _, err := c.UpdateCache(ctx, "gemini", &UpdateCacheRequest{Name: "cachedContents/demo", TTL: time.Minute}); err != nil {
+		t.Fatalf("UpdateCache: %v", err)
+	}
+	if err := c.DeleteCache(ctx, "gemini", "cachedContents/demo"); err != nil {
+		t.Fatalf("DeleteCache: %v", err)
+	}
+}
+
+func TestClientCacheManagementUnsupportedProvider(t *testing.T) {
+	c, err := NewClient(Config{
+		Primary: "openai/gpt-4o",
+		Providers: map[string]ProviderConfig{
+			"openai": {Type: "openai", APIKey: "sk-test", BaseURL: "https://api.openai.com"},
+		},
+		Retry: 0,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	_, err = c.CreateCache(context.Background(), "openai", &CreateCacheRequest{
+		Model:    "gpt-4o",
+		Messages: []Message{TextMessage("user", "hello")},
+	})
+	if err == nil {
+		t.Fatal("CreateCache should fail for unsupported provider")
 	}
 }

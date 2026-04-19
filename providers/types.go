@@ -26,31 +26,34 @@ type Provider interface {
 
 // Config is the low-level configuration passed to each provider constructor.
 type Config struct {
-	APIKey  string
-	BaseURL string
-	Timeout time.Duration
+	APIKey             string
+	BearerToken        string
+	BaseURL            string
+	Timeout            time.Duration
+	Headers            map[string]string
+	Organization       string
+	Project            string
+	UserProject        string
+	CredentialProvider CredentialProvider
 }
 
-// ─── Cache control ────────────────────────────────────────────────────────────
-
-// CacheControl enables prompt caching on supported providers (currently Anthropic).
+// CacheControl describes Anthropic prompt-caching controls.
 // Set this on content blocks or tools to mark them as cacheable at that boundary.
 //
-// Anthropic processes cache breakpoints in order: Tools → System → Messages.
+// Anthropic processes cache breakpoints in order: Tools -> System -> Messages.
 // Cache hits are billed at 10% of the normal input-token rate.
 // Cache writes are billed at 125% (5-min TTL) or 200% (1-hour TTL).
-// Minimum block size: 1024 tokens (Sonnet); 4096 tokens (Opus, Haiku 4.5+).
+// Minimum cacheable block size varies by Anthropic model.
 // Maximum 4 breakpoints per request.
 //
-// OpenAI caching is fully automatic — no CacheControl field is needed.
+// OpenAI caching is fully automatic; use Request.Cache for request-level hints.
 type CacheControl struct {
 	// Type is the caching strategy. "ephemeral" is the only supported value.
 	Type string `json:"type"` // "ephemeral"
 
 	// TTL is the optional cache duration (Anthropic only).
-	// "5m" — 5-minute TTL, 1.25× write cost (default when omitted).
-	// "1h" — 1-hour TTL, 2× write cost; use for prompts queried frequently
-	//         over longer periods (amortises the higher write cost quickly).
+	// "5m": 5-minute TTL, 1.25x write cost by default.
+	// "1h": 1-hour TTL, 2x write cost for longer-lived prompts.
 	TTL string `json:"ttl,omitempty"` // "5m" | "1h"
 }
 
@@ -62,12 +65,12 @@ type CacheUsage struct {
 	CreatedTokens int
 
 	// ReadTokens is the number of tokens served from the cache (Anthropic:
-	// cache_read_input_tokens; OpenAI: prompt_tokens_details.cached_tokens).
-	// Cache reads are billed at 10% (Anthropic) or 50% (OpenAI) of normal rate.
+	// cache_read_input_tokens; OpenAI: prompt_tokens_details.cached_tokens;
+	// Gemini: cachedContentTokenCount).
+	// Anthropic cache reads are billed at 10% of base input price. OpenAI and
+	// Gemini cache-hit pricing is provider-defined; see official pricing docs.
 	ReadTokens int
 }
-
-// ─── Content blocks ───────────────────────────────────────────────────────────
 
 // ContentBlock is the sealed interface for message content types.
 type ContentBlock interface {
@@ -95,7 +98,7 @@ func (ImageContent) contentBlock() {}
 
 // ImageSource describes where an image comes from.
 type ImageSource struct {
-	Type      string `json:"type"`                // "url", "base64", "file_id"
+	Type      string `json:"type"`                 // "url", "base64", "file_id"
 	MediaType string `json:"media_type,omitempty"` // e.g. "image/jpeg"
 	Data      string `json:"data,omitempty"`       // base64-encoded bytes
 	URL       string `json:"url,omitempty"`
@@ -128,17 +131,15 @@ func (DocumentContent) contentBlock() {}
 
 // DocumentSource describes document data.
 type DocumentSource struct {
-	Type      string `json:"type"`                // "base64", "url"
+	Type      string `json:"type"`                 // "base64", "url"
 	MediaType string `json:"media_type,omitempty"` // e.g. "application/pdf"
 	Data      string `json:"data,omitempty"`       // base64-encoded bytes
 	URL       string `json:"url,omitempty"`
 }
 
-// ─── Message ──────────────────────────────────────────────────────────────────
-
 // Message is a single turn in a conversation.
 type Message struct {
-	Role    string         `json:"role"`    // "user", "assistant", "system", "tool"
+	Role    string         `json:"role"` // "user", "assistant", "system", "tool"
 	Content []ContentBlock `json:"content"`
 
 	// ToolCallID is the ID of the tool call this message is responding to.
@@ -153,8 +154,6 @@ type Message struct {
 	// Required by Gemini to construct the functionResponse.
 	Name string `json:"name,omitempty"`
 }
-
-// ─── Tool ─────────────────────────────────────────────────────────────────────
 
 // Tool describes a function that the model may call.
 type Tool struct {
@@ -185,8 +184,6 @@ type ToolCall struct {
 	} `json:"function"`
 }
 
-// ─── Request / Response ───────────────────────────────────────────────────────
-
 // Request is the unified completion/streaming request.
 type Request struct {
 	Messages    []Message
@@ -198,6 +195,11 @@ type Request struct {
 	ToolChoice  string         // "auto", "none", "required", or specific function name
 	Options     map[string]any // provider-specific extras (e.g. Ollama parameters)
 
+	// Cache enables provider-native request-time caching controls such as
+	// Anthropic top-level cache_control, OpenAI prompt cache hints, and
+	// Gemini explicit cachedContent reuse.
+	Cache *CacheOptions
+
 	// UserID is an optional end-user identifier forwarded to providers that support
 	// user attribution (Anthropic metadata.user_id, OpenAI user field).
 	// Useful for abuse detection and per-user rate limiting on the provider side.
@@ -206,17 +208,17 @@ type Request struct {
 
 // Response is the unified non-streaming response.
 type Response struct {
-	Content        string
-	Model          string
-	Provider       string
-	InputTokens    int        // total input tokens (including cache-read and cache-write tokens)
-	OutputTokens   int        // total output tokens (including reasoning/thinking tokens)
-	TokensUsed     int        // InputTokens + OutputTokens
-	ReasoningTokens int       // subset of OutputTokens used for internal reasoning (OpenAI o-series: reasoning_tokens; Gemini thinking: thoughtsTokenCount)
-	FinishReason   string
-	ToolCalls      []ToolCall
-	CacheUsage     CacheUsage // non-zero when the provider reports cache activity
-	CreatedAt      time.Time
+	Content         string
+	Model           string
+	Provider        string
+	InputTokens     int // total input tokens (including cache-read and cache-write tokens)
+	OutputTokens    int // total output tokens (including reasoning/thinking tokens)
+	TokensUsed      int // InputTokens + OutputTokens
+	ReasoningTokens int // subset of OutputTokens used for internal reasoning (OpenAI o-series: reasoning_tokens; Gemini thinking: thoughtsTokenCount)
+	FinishReason    string
+	ToolCalls       []ToolCall
+	CacheUsage      CacheUsage // non-zero when the provider reports cache activity
+	CreatedAt       time.Time
 }
 
 // StreamChunk is one piece of a streaming response.
@@ -232,8 +234,6 @@ type StreamChunk struct {
 	CacheUsage      CacheUsage // populated in the final Done chunk when caching is active
 	Error           error
 }
-
-// ─── Embed ────────────────────────────────────────────────────────────────────
 
 // EmbedRequest is the unified embedding request.
 type EmbedRequest struct {

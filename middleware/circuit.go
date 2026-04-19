@@ -60,6 +60,71 @@ func (m *CircuitBreakerMiddleware) Health(ctx context.Context) error {
 	return m.provider.Health(ctx)
 }
 
+func (m *CircuitBreakerMiddleware) CreateCache(ctx context.Context, req *providers.CreateCacheRequest) (*providers.Cache, error) {
+	cp, err := cacheProvider(m.provider)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.allow(); err != nil {
+		return nil, err
+	}
+	resp, err := cp.CreateCache(ctx, req)
+	m.record(err)
+	return resp, err
+}
+
+func (m *CircuitBreakerMiddleware) GetCache(ctx context.Context, name string) (*providers.Cache, error) {
+	cp, err := cacheProvider(m.provider)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.allow(); err != nil {
+		return nil, err
+	}
+	resp, err := cp.GetCache(ctx, name)
+	m.record(err)
+	return resp, err
+}
+
+func (m *CircuitBreakerMiddleware) ListCaches(ctx context.Context, req *providers.ListCachesRequest) (*providers.ListCachesResponse, error) {
+	cp, err := cacheProvider(m.provider)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.allow(); err != nil {
+		return nil, err
+	}
+	resp, err := cp.ListCaches(ctx, req)
+	m.record(err)
+	return resp, err
+}
+
+func (m *CircuitBreakerMiddleware) UpdateCache(ctx context.Context, req *providers.UpdateCacheRequest) (*providers.Cache, error) {
+	cp, err := cacheProvider(m.provider)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.allow(); err != nil {
+		return nil, err
+	}
+	resp, err := cp.UpdateCache(ctx, req)
+	m.record(err)
+	return resp, err
+}
+
+func (m *CircuitBreakerMiddleware) DeleteCache(ctx context.Context, name string) error {
+	cp, err := cacheProvider(m.provider)
+	if err != nil {
+		return err
+	}
+	if err := m.allow(); err != nil {
+		return err
+	}
+	err = cp.DeleteCache(ctx, name)
+	m.record(err)
+	return err
+}
+
 // allow checks the circuit state and returns an error if the circuit is open.
 func (m *CircuitBreakerMiddleware) allow() error {
 	if err := m.breaker.Allow(); err != nil {

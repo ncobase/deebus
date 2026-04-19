@@ -29,7 +29,7 @@ type ProviderError struct {
 	Retryable bool
 
 	// Fallback indicates the next provider in the chain should be tried.
-	// False only for 400 Bad Request — the request itself is malformed.
+	// False only for 400 Bad Request - the request itself is malformed.
 	Fallback bool
 
 	// RetryAfter is the server-requested wait duration parsed from the
@@ -59,7 +59,7 @@ func IsRetryable(err error) bool {
 func IsFallback(err error) bool {
 	pe := unwrapProviderError(err)
 	if pe == nil {
-		return true // network/unknown errors → try next provider
+		return true // network/unknown errors -> try next provider
 	}
 	return pe.Fallback
 }

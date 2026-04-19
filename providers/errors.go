@@ -12,16 +12,16 @@ import (
 //
 // Retry and fallback strategy:
 //
-//	400 Bad Request   → not retryable, not fallback  (malformed request)
-//	401/403           → not retryable, fallback       (try a differently-configured provider)
-//	408/504 Timeout   → retryable,     fallback
-//	429 Rate Limit    → retryable,     fallback       (honour Retry-After if present)
-//	5xx Server Error  → retryable,     fallback
-//	other             → retryable if ≥500, always fallback
+//	400 Bad Request   -> not retryable, not fallback  (malformed request)
+//	401/403           -> not retryable, fallback       (try a differently-configured provider)
+//	408/504 Timeout   -> retryable,     fallback
+//	429 Rate Limit    -> retryable,     fallback       (honour Retry-After if present)
+//	5xx Server Error  -> retryable,     fallback
+//	other             -> retryable if >=500, always fallback
 func parseError(statusCode int, body []byte, header http.Header, provider string) *ProviderError {
 	msg := string(body)
 	if len(msg) > 300 {
-		msg = msg[:300] + "…"
+		msg = msg[:300] + "..."
 	}
 
 	pe := &ProviderError{
@@ -61,7 +61,7 @@ func parseError(statusCode int, body []byte, header http.Header, provider string
 		pe.Retryable = true
 		pe.Fallback = true
 
-	case statusCode >= 500: // 500, 502, 503, …
+	case statusCode >= 500: // 500, 502, 503, ...
 		pe.Type = ErrTypeProvider
 		pe.Message = fmt.Sprintf("server error (%d)", statusCode)
 		pe.Retryable = true

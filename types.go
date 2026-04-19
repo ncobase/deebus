@@ -2,20 +2,28 @@ package deebus
 
 import "github.com/ncobase/deebus/providers"
 
-// Type aliases — import deebus and get everything you need without touching
-// the providers sub-package directly.
+// Type aliases expose provider types through the root package.
 type (
 	// Provider types.
-	Provider      = providers.Provider
-	Request       = providers.Request
-	Response      = providers.Response
-	StreamChunk   = providers.StreamChunk
-	EmbedRequest  = providers.EmbedRequest
-	EmbedResponse = providers.EmbedResponse
+	Provider           = providers.Provider
+	Credentials        = providers.Credentials
+	CredentialProvider = providers.CredentialProvider
+	Request            = providers.Request
+	Response           = providers.Response
+	StreamChunk        = providers.StreamChunk
+	EmbedRequest       = providers.EmbedRequest
+	EmbedResponse      = providers.EmbedResponse
 
 	// Cache types.
-	CacheControl = providers.CacheControl
-	CacheUsage   = providers.CacheUsage
+	CacheControl       = providers.CacheControl
+	CacheUsage         = providers.CacheUsage
+	CacheOptions       = providers.CacheOptions
+	Cache              = providers.Cache
+	CacheUsageMetadata = providers.CacheUsageMetadata
+	CreateCacheRequest = providers.CreateCacheRequest
+	UpdateCacheRequest = providers.UpdateCacheRequest
+	ListCachesRequest  = providers.ListCachesRequest
+	ListCachesResponse = providers.ListCachesResponse
 
 	// Message types.
 	Message         = providers.Message
@@ -34,7 +42,7 @@ type (
 	ToolCall       = providers.ToolCall
 )
 
-// Message constructors — convenience wrappers around the providers package.
+// Message constructors expose providers helpers through the root package.
 var (
 	TextMessage       = providers.TextMessage
 	ImageMessage      = providers.ImageMessage

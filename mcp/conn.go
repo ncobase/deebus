@@ -132,7 +132,7 @@ func (c *conn) readLoop(r io.Reader) {
 				}
 			}
 		} else if msg.Method != "" {
-			// Notification or server-initiated request — dispatch to handler.
+			// Notification or server-initiated request - dispatch to handler.
 			if c.onNotification != nil {
 				c.onNotification(msg)
 			}

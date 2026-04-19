@@ -10,12 +10,9 @@ import (
 	"github.com/ncobase/deebus/providers"
 )
 
-// ─── Agent types ──────────────────────────────────────────────────────────────
-
-// AgentToolFunc is called by the agent loop to execute a tool.
-// name is the function name; args is the JSON-encoded arguments string.
-// Return the result as a plain string (or JSON string) and an optional error.
-// A non-nil error stops the agent loop and is returned to the caller.
+// AgentToolFunc executes a tool call within the agent loop.
+// name is the function name and args is the JSON-encoded argument string.
+// Returning a non-nil error stops the loop and returns that error to the caller.
 type AgentToolFunc func(ctx context.Context, name, args string) (string, error)
 
 // AgentEventType describes what happened in an agent loop event.
@@ -59,7 +56,7 @@ type AgentEvent struct {
 
 // AgentConfig controls agent loop behaviour.
 type AgentConfig struct {
-	// MaxIterations caps the number of model→tool round-trips. Default: 10.
+	// MaxIterations caps the number of model->tool round-trips. Default: 10.
 	MaxIterations int
 
 	// DisableParallel forces sequential tool execution even when the model
@@ -76,10 +73,8 @@ type AgentConfig struct {
 	MaxHistoryMessages int
 }
 
-// ─── Agent loop (non-streaming) ───────────────────────────────────────────────
-
 // RunAgent runs a synchronous agentic loop: call the model, execute any tool
-// calls (in parallel when Parallel is true), feed results back, and repeat
+// calls (in parallel unless DisableParallel is true), feed results back, and repeat
 // until the model produces a final text response or MaxIterations is reached.
 //
 // Returns the model's final text content and the full conversation history.
@@ -122,7 +117,7 @@ func (c *Client) RunAgent(
 			Duration:   time.Since(t0),
 		})
 
-		// No tool calls → model is done.
+		// No tool calls -> model is done.
 		if len(resp.ToolCalls) == 0 {
 			emit(AgentEvent{Type: EventDone, Iteration: i + 1, Output: resp.Content})
 			return resp.Content, msgs, nil
@@ -147,11 +142,9 @@ func (c *Client) RunAgent(
 	return "", msgs, err
 }
 
-// ─── Agent loop (streaming) ───────────────────────────────────────────────────
-
 // RunAgentStream is the streaming variant of RunAgent. Each model response is
 // streamed to the caller via the returned channel. Tool calls are executed
-// between turns (parallel when Parallel is true). The channel is closed when
+// between turns (in parallel unless DisableParallel is true). The channel is closed when
 // the agent finishes or an error occurs (delivered as a Done chunk with Error).
 //
 // When the loop ends, the full conversation history is sent to histCh if
@@ -271,8 +264,6 @@ func (c *Client) RunAgentStream(
 	return out, nil
 }
 
-// ─── Internal helpers ─────────────────────────────────────────────────────────
-
 type toolExecResult struct {
 	idx    int
 	callID string
@@ -281,7 +272,7 @@ type toolExecResult struct {
 }
 
 // dispatchTools executes tool calls sequentially or in parallel according to
-// cfg.Parallel. Results are returned in the same order as calls.
+// cfg.DisableParallel. Results are returned in the same order as calls.
 func dispatchTools(
 	ctx context.Context,
 	calls []providers.ToolCall,
@@ -327,10 +318,10 @@ func dispatchTools(
 		return results, nil
 	}
 
-	// Parallel execution — collect first error.
+	// Parallel execution - collect first error.
 	var (
-		wg      sync.WaitGroup
-		mu      sync.Mutex
+		wg       sync.WaitGroup
+		mu       sync.Mutex
 		firstErr error
 	)
 	for i, tc := range calls {

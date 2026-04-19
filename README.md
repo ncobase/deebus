@@ -10,25 +10,25 @@
 
 ## Features
 
-| Feature | Details |
-|---------|---------|
-| **Multi-provider** | OpenAI, Anthropic, Google Gemini, Ollama, Cohere |
-| **Smart fallback** | Primary → fallbacks in order; HTTP 400 is never retried or fallen back |
-| **Retry with jitter** | Equal-jitter exponential backoff; honours `Retry-After` on 429 |
-| **Circuit breaker** | Closed → Open → Half-open state machine per provider |
-| **Rate limiting** | Continuous token-bucket algorithm per provider |
-| **Tool calling** | Function/tool use for all five providers with streaming assembly |
-| **Multi-turn tool calling** | `AssistantMessage` / `ToolResultMessage` with per-provider wire format |
-| **Agent loop** | `RunAgent` / `RunAgentStream` with parallel tool dispatch and event hooks |
-| **MCP client** | Connects to any MCP server via stdio or Streamable HTTP (spec 2025-03-26) |
-| **Prompt caching** | User-controlled `CacheControl` on content blocks and tools; `CacheUsage` in response |
-| **Streaming** | SSE / NDJSON streaming for all five providers |
-| **Multimodal** | Text, images (URL / base64), audio, PDF documents |
-| **Embeddings** | OpenAI, Gemini, Ollama, Cohere |
-| **Structured logging** | Pluggable `Logger` interface; defaults to no-op |
-| **Usage statistics** | Per-request input/output/cache token counters; ReasoningTokens for o-series/thinking models; aggregate Stats with cache hit/write totals |
-| **Zero dependencies** | Only `gopkg.in/yaml.v3` for config parsing |
-| **Thread-safe** | All public methods are safe for concurrent use |
+| Feature                     | Details                                                                                                                                  |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Multi-provider**          | OpenAI, Anthropic, Google Gemini, Ollama, Cohere                                                                                         |
+| **Smart fallback**          | Primary -> fallbacks in order; HTTP 400 is never retried or fallen back                                                                  |
+| **Retry with jitter**       | Equal-jitter exponential backoff; honours `Retry-After` on 429                                                                           |
+| **Circuit breaker**         | Closed -> Open -> Half-open state machine per provider                                                                                   |
+| **Rate limiting**           | Continuous token-bucket algorithm per provider                                                                                           |
+| **Tool calling**            | Function/tool use for all five providers with streaming assembly                                                                         |
+| **Multi-turn tool calling** | `AssistantMessage` / `ToolResultMessage` with per-provider wire format                                                                   |
+| **Agent loop**              | `RunAgent` / `RunAgentStream` with parallel tool dispatch and event hooks                                                                |
+| **MCP client**              | Connects to any MCP server via stdio or Streamable HTTP (spec 2025-03-26)                                                                |
+| **Prompt caching**          | Anthropic block/request caching, OpenAI request hints, Gemini explicit caches; `CacheUsage` in response                                  |
+| **Streaming**               | SSE / NDJSON streaming for all five providers                                                                                            |
+| **Multimodal**              | Text, images (URL / base64), audio, PDF documents                                                                                        |
+| **Embeddings**              | OpenAI, Gemini, Ollama, Cohere                                                                                                           |
+| **Structured logging**      | Pluggable `Logger` interface; defaults to no-op                                                                                          |
+| **Usage statistics**        | Per-request input/output/cache token counters; ReasoningTokens for o-series/thinking models; aggregate Stats with cache hit/write totals |
+| **Zero dependencies**       | Only `gopkg.in/yaml.v3` for optional YAML loading                                                                                        |
+| **Thread-safe**             | All public methods are safe for concurrent use                                                                                           |
 
 ---
 
@@ -44,34 +44,9 @@ Requires **Go 1.21** or later.
 
 ## Quick Start
 
-### 1. Write a configuration file (`deebus.yaml`)
-
-```yaml
-providers:
-  anthropic:
-    type: anthropic
-    apiKey: ${ANTHROPIC_API_KEY}      # expanded from environment at load time
-    baseURL: https://api.anthropic.com
-  openai:
-    type: openai
-    apiKey: ${OPENAI_API_KEY}
-    baseURL: https://api.openai.com
-
-primary:   anthropic/claude-opus-4-6
-fallbacks:
-  - openai/gpt-4o
-
-timeout:   30   # seconds per request
-retry:     2    # additional attempts on transient errors (429, 5xx, network)
-rateLimit: 10   # max requests/second per provider (0 = disabled)
-circuitBreaker:
-  maxFailures:  5   # consecutive failures that open the circuit (0 = disabled)
-  resetTimeout: 60  # seconds before a half-open probe
-```
-
-`${ENV_VAR}` and `$ENV_VAR` placeholders are expanded before YAML parsing; API keys are never written in plaintext.
-
-### 2. Use the client
+`NewClient` is the primary entry point. The library does not require a
+dedicated config file; applications can pass `deebus.Config` directly and read
+environment variables however they prefer.
 
 ```go
 package main
@@ -80,12 +55,24 @@ import (
     "context"
     "fmt"
     "log"
+    "os"
 
     "github.com/ncobase/deebus"
 )
 
 func main() {
-    client, err := deebus.LoadConfig("deebus.yaml")
+    client, err := deebus.NewClient(deebus.Config{
+        Providers: map[string]deebus.ProviderConfig{
+            "anthropic": {
+                Type:    "anthropic",
+                APIKey:  os.Getenv("ANTHROPIC_API_KEY"),
+                BaseURL: "https://api.anthropic.com",
+            },
+        },
+        Primary: "anthropic/claude-opus-4-6",
+        Timeout: 30,
+        Retry:   2,
+    })
     if err != nil {
         log.Fatal(err)
     }
@@ -113,24 +100,32 @@ func main() {
 
 ### Top-level fields
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `providers` | map | — | Named provider configurations (see below) |
-| `primary` | string | — | **Required.** Model to try first (`provider/model`) |
-| `fallbacks` | []string | `[]` | Ordered fallback models tried when the primary fails |
-| `timeout` | int | `30` | HTTP request timeout in seconds |
-| `retry` | int | `2` | Additional attempts per provider on transient errors |
-| `rateLimit` | int | `0` | Max requests per second per provider (0 = disabled) |
-| `circuitBreaker.maxFailures` | int | `0` | Consecutive failures before opening circuit (0 = disabled) |
-| `circuitBreaker.resetTimeout` | int | `60` | Seconds before half-open probe after circuit opens |
+| Field                         | Type     | Default | Description                                                |
+| ----------------------------- | -------- | ------- | ---------------------------------------------------------- |
+| `providers`                   | map      | -       | Named provider configurations (see below)                  |
+| `primary`                     | string   | -       | **Required.** Model to try first (`provider/model`)        |
+| `fallbacks`                   | []string | `[]`    | Ordered fallback models tried when the primary fails       |
+| `timeout`                     | int      | `30`    | HTTP request timeout in seconds                            |
+| `retry`                       | int      | `2`     | Additional attempts per provider on transient errors       |
+| `rateLimit`                   | int      | `0`     | Max requests per second per provider (0 = disabled)        |
+| `circuitBreaker.maxFailures`  | int      | `0`     | Consecutive failures before opening circuit (0 = disabled) |
+| `circuitBreaker.resetTimeout` | int      | `60`    | Seconds before half-open probe after circuit opens         |
 
 ### Provider fields
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | string | ✓ | One of `openai`, `anthropic`, `gemini`, `ollama`, `cohere` |
-| `apiKey` | string | ✓ * | API key. *Not required for `ollama`. |
-| `baseURL` | string | ✓ | Must use `https://` or `http://localhost` / `http://127.0.0.1` / `http://0.0.0.0` |
+| Field          | Type   | Required | Description                                                                                    |
+| -------------- | ------ | -------- | ---------------------------------------------------------------------------------------------- |
+| `type`         | string | Yes      | One of `openai`, `anthropic`, `gemini`, `ollama`, `cohere`                                     |
+| `apiKey`       | string | Yes\*    | API key. Optional when `bearerToken`, `headers`, or `CredentialProvider` supplies credentials. |
+| `bearerToken`  | string | -        | Static bearer token for OAuth-style or proxy auth                                              |
+| `baseURL`      | string | Yes      | Must use `https://` or `http://localhost` / `http://127.0.0.1` / `http://0.0.0.0`              |
+| `headers`      | map    | -        | Extra static headers sent on every request                                                     |
+| `organization` | string | -        | OpenAI `OpenAI-Organization` header                                                            |
+| `project`      | string | -        | OpenAI `OpenAI-Project` header                                                                 |
+| `userProject`  | string | -        | Gemini `x-goog-user-project` header                                                            |
+
+See [docs/auth.md](docs/auth.md) for the authentication matrix and runtime credential guidance.
+`CredentialProvider` is available for programmatic configuration only.
 
 ### Programmatic configuration
 
@@ -150,17 +145,95 @@ client, err := deebus.NewClient(deebus.Config{
 })
 ```
 
+### Optional YAML loading
+
+If your application already stores settings in YAML, `LoadConfig` can read a
+file into `Config`. The file name and location belong to the application.
+
+```yaml
+providers:
+  anthropic:
+    type: anthropic
+    apiKey: ${ANTHROPIC_API_KEY} # expanded from environment at load time
+    baseURL: https://api.anthropic.com
+  openai:
+    type: openai
+    apiKey: ${OPENAI_API_KEY}
+    baseURL: https://api.openai.com
+
+primary: anthropic/claude-opus-4-6
+fallbacks:
+  - openai/gpt-4o
+
+timeout: 30 # seconds per request
+retry: 2 # additional attempts on transient errors (429, 5xx, network)
+rateLimit: 10 # max requests/second per provider (0 = disabled)
+circuitBreaker:
+  maxFailures: 5 # consecutive failures that open the circuit (0 = disabled)
+  resetTimeout: 60 # seconds before a half-open probe
+```
+
+```go
+client, err := deebus.LoadConfig("./config.yaml")
+```
+
+`${ENV_VAR}` and `$ENV_VAR` placeholders are expanded before YAML parsing.
+
+---
+
+## Authentication
+
+Direct API auth support is provider-specific:
+
+| Provider  | Direct API auth               | Extra fields              |
+| --------- | ----------------------------- | ------------------------- |
+| OpenAI    | API key                       | `organization`, `project` |
+| Anthropic | API key                       | -                         |
+| Gemini    | API key or OAuth bearer token | `userProject`             |
+| Ollama    | none                          | -                         |
+| Cohere    | API key                       | -                         |
+
+For short-lived bearer tokens, OAuth access tokens, or gateway credentials, use a runtime `CredentialProvider`:
+
+```go
+type tokenSource struct{}
+
+func (tokenSource) Credentials(ctx context.Context) (deebus.Credentials, error) {
+    token, err := currentAccessToken(ctx)
+    if err != nil {
+        return deebus.Credentials{}, err
+    }
+    return deebus.Credentials{
+        BearerToken: token,
+        UserProject: "gcp-project-id", // Gemini only
+    }, nil
+}
+
+client, err := deebus.NewClient(deebus.Config{
+    Providers: map[string]deebus.ProviderConfig{
+        "gemini": {
+            Type:               "gemini",
+            BaseURL:            "https://generativelanguage.googleapis.com",
+            CredentialProvider: tokenSource{},
+        },
+    },
+    Primary: "gemini/gemini-2.5-flash",
+})
+```
+
+The library resolves credentials per request. It does not implement provider-specific OAuth browser flows or token exchange endpoints.
+
 ---
 
 ## Provider Compatibility
 
-| Provider | Complete | Stream | Embed | Tool Calling | Multimodal | Caching |
-|----------|:--------:|:------:|:-----:|:------------:|:----------:|:-------:|
-| **OpenAI** | ✓ | ✓ SSE | ✓ | ✓ | Image, Audio | Auto (≥1024 tokens) |
-| **Anthropic** | ✓ | ✓ SSE | — | ✓ | Image, PDF | Explicit `cache_control` |
-| **Gemini** | ✓ | ✓ SSE | ✓ | ✓ | Image | Context cache (`cachedContentTokenCount`) |
-| **Ollama** | ✓ | ✓ NDJSON | ✓ | ✓ | — | — |
-| **Cohere** | ✓ | ✓ SSE | ✓ | ✓ | — | — |
+| Provider      | Complete |    Stream    | Embed | Tool Calling |  Multimodal  |                       Caching                        |
+| ------------- | :------: | :----------: | :---: | :----------: | :----------: | :--------------------------------------------------: |
+| **OpenAI**    |   Yes    |  Yes (SSE)   |  Yes  |     Yes      | Image, Audio | Auto (>=1024 tokens) + `Request.Cache.Key/Retention` |
+| **Anthropic** |   Yes    |  Yes (SSE)   |  No   |     Yes      |  Image, PDF  |        Automatic or explicit `cache_control`         |
+| **Gemini**    |   Yes    |  Yes (SSE)   |  Yes  |     Yes      |    Image     |         Implicit + explicit `cachedContents`         |
+| **Ollama**    |   Yes    | Yes (NDJSON) |  Yes  |     Yes      |      No      |                          No                          |
+| **Cohere**    |   Yes    |  Yes (SSE)   |  Yes  |     Yes      |      No      |                          No                          |
 
 ---
 
@@ -327,23 +400,23 @@ history := <-histCh // full conversation including all tool turns
 
 ### AgentConfig fields
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `MaxIterations` | int | `10` | Maximum model → tool round-trips |
-| `DisableParallel` | bool | `false` | When `false`, independent tool calls in one turn run concurrently |
-| `Hook` | `func(AgentEvent)` | `nil` | Called synchronously on each observable action |
-| `MaxHistoryMessages` | int | `0` | Trim conversation to at most N messages, preserving system messages |
+| Field                | Type               | Default | Description                                                         |
+| -------------------- | ------------------ | ------- | ------------------------------------------------------------------- |
+| `MaxIterations`      | int                | `10`    | Maximum model -> tool round-trips                                   |
+| `DisableParallel`    | bool               | `false` | When `false`, independent tool calls in one turn run concurrently   |
+| `Hook`               | `func(AgentEvent)` | `nil`   | Called synchronously on each observable action                      |
+| `MaxHistoryMessages` | int                | `0`     | Trim conversation to at most N messages, preserving system messages |
 
 ### AgentEvent types
 
-| Type | When |
-|------|------|
-| `"llm_request"` | Before each model call |
-| `"llm_response"` | After the model responds |
-| `"tool_call"` | Before each tool execution |
-| `"tool_result"` | After a tool returns |
-| `"done"` | Agent produced a final answer |
-| `"error"` | Agent loop terminated with an error |
+| Type             | When                                |
+| ---------------- | ----------------------------------- |
+| `"llm_request"`  | Before each model call              |
+| `"llm_response"` | After the model responds            |
+| `"tool_call"`    | Before each tool execution          |
+| `"tool_result"`  | After a tool returns                |
+| `"done"`         | Agent produced a final answer       |
+| `"error"`        | Agent loop terminated with an error |
 
 ---
 
@@ -411,26 +484,22 @@ out, err := mcpClient.Execute(ctx, "read_file", `{"path":"/tmp/notes.txt"}`)
 
 Every provider is wrapped with the following middleware layers, constructed automatically by `NewClient` / `LoadConfig`.
 
-```
-Client.Complete(req)
-    │
-    └─ LoggingMiddleware           ← records duration, tokens, errors
-        └─ CircuitBreakerMiddleware ← rejects immediately when provider is down
-            └─ RetryMiddleware      ← equal-jitter exponential backoff
-                └─ RateLimitMiddleware ← continuous token-bucket throttle
-                    └─ BaseProvider    ← HTTP call to the LLM API
-```
+1. `LoggingMiddleware`: records duration, tokens, and errors.
+2. `CircuitBreakerMiddleware`: rejects immediately when the provider is unavailable.
+3. `RetryMiddleware`: retries transient failures with equal-jitter backoff.
+4. `RateLimitMiddleware`: enforces a continuous token-bucket limit.
+5. `BaseProvider`: performs the HTTP call to the upstream API.
 
 ### Retry and Fallback Strategy
 
-| Status | Retry same provider | Try next fallback |
-|--------|--------------------:|------------------:|
-| 400 Bad Request | No | **No** — request is malformed |
-| 401 / 403 Auth error | No | Yes |
-| 408 / 504 Timeout | Yes | Yes |
-| 429 Rate limited | Yes (honours `Retry-After`) | Yes after retries exhausted |
-| 5xx Server error | Yes | Yes |
-| Network failure | Yes | Yes |
+| Status               |         Retry same provider |             Try next fallback |
+| -------------------- | --------------------------: | ----------------------------: |
+| 400 Bad Request      |                          No | **No** - request is malformed |
+| 401 / 403 Auth error |                          No |                           Yes |
+| 408 / 504 Timeout    |                         Yes |                           Yes |
+| 429 Rate limited     | Yes (honours `Retry-After`) |   Yes after retries exhausted |
+| 5xx Server error     |                         Yes |                           Yes |
+| Network failure      |                         Yes |                           Yes |
 
 Auth errors (401/403) and bad requests (400) do **not** count as failures toward the circuit breaker.
 
@@ -452,16 +521,33 @@ Supported by OpenAI, Gemini, Ollama, and Cohere.
 
 ## Prompt Caching
 
-Caching reduces token costs on repeated static context (system prompts, tool schemas, retrieved documents). The library exposes the mechanism; **policy decisions belong to the caller**.
+Caching reduces token costs on repeated static context (system prompts, tool schemas, retrieved documents). The library exposes provider-native controls; **policy decisions belong to the caller**.
 
-### Anthropic — explicit `cache_control` markers
+See [docs/caching.md](docs/caching.md) for the design and lifecycle model.
 
-Anthropic processes cache breakpoints in order: **Tools → System → Messages**. The `anthropic-beta: prompt-caching-2024-07-31` header is added automatically when markers are detected.
+### Anthropic - automatic or explicit `cache_control`
 
-Minimum block size: 1024 tokens (Sonnet), 4096 tokens (Opus / Haiku 4.5+). Maximum 4 breakpoints per request.
+Anthropic supports both top-level automatic caching and explicit cache breakpoints. Cache prefixes are evaluated in the order **Tools -> System -> Messages**.
+
+Minimum cacheable block size varies by Anthropic model. Check Anthropic's
+current prompt-caching documentation when sizing reusable prefixes. Anthropic
+currently allows up to 4 explicit cache breakpoints per request.
 
 ```go
-// Cache a system prompt (written on first request, read from cache thereafter).
+// Automatic request-level caching.
+req := &deebus.Request{
+    Messages: []deebus.Message{
+        deebus.TextMessage("system", longSystemPrompt),
+        deebus.TextMessage("user", "Summarise your role."),
+    },
+    Cache: &deebus.CacheOptions{
+        Control: &deebus.CacheControl{Type: "ephemeral"},
+    },
+}
+```
+
+```go
+// Explicit block-level caching.
 req := &deebus.Request{
     Messages: []deebus.Message{
         {
@@ -469,20 +555,14 @@ req := &deebus.Request{
             Content: []deebus.ContentBlock{
                 deebus.TextContent{
                     Type: "text",
-                    Text: longSystemPrompt, // must exceed minimum token threshold
+                    Text: longSystemPrompt,
                     CacheControl: &deebus.CacheControl{Type: "ephemeral"},
-                    // TTL: "1h" for content queried over longer periods (2× write cost)
                 },
             },
         },
         deebus.TextMessage("user", "Summarise your role."),
     },
-    UserID: "user-123", // optional: forwarded as metadata.user_id
 }
-
-resp, err := client.Complete(ctx, req)
-fmt.Printf("cache: wrote=%d read=%d\n",
-    resp.CacheUsage.CreatedTokens, resp.CacheUsage.ReadTokens)
 ```
 
 ```go
@@ -492,43 +572,76 @@ tools := []deebus.Tool{
     {
         Type:         "function",
         Function:     schema2,
-        CacheControl: &deebus.CacheControl{Type: "ephemeral"}, // caches all tools above
+        CacheControl: &deebus.CacheControl{Type: "ephemeral"},
     },
 }
 ```
 
-### OpenAI — automatic (zero config)
+### OpenAI - automatic plus cache hints
 
-OpenAI caches the longest cacheable prefix automatically (≥1024 tokens, 50% discount). No markers required — cache hits are reflected in `CacheUsage.ReadTokens`:
+OpenAI caches the longest cacheable prefix automatically for prompts of 1024 tokens or more. To supply cache key and retention hints, set `Request.Cache`:
 
 ```go
-resp, _ := client.Complete(ctx, req)
+resp, _ := client.Complete(ctx, &deebus.Request{
+    Messages: messages,
+    Cache: &deebus.CacheOptions{
+        Key:       "tenant:123:repo:deebus",
+        Retention: "24h", // or "in_memory"
+    },
+})
 if resp.CacheUsage.ReadTokens > 0 {
     fmt.Printf("openai served %d tokens from cache\n", resp.CacheUsage.ReadTokens)
 }
 ```
 
+### Gemini - implicit or explicit cached contents
+
+Gemini 2.5+ models use implicit caching automatically. For explicit cached prefixes, create a cache resource once and then reference it from later requests:
+
+```go
+cache, err := client.CreateCache(ctx, "gemini", &deebus.CreateCacheRequest{
+    Model:       "gemini-2.5-flash",
+    DisplayName: "kb:customer-support",
+    Messages: []deebus.Message{
+        deebus.TextMessage("system", "You are a support assistant."),
+        deebus.TextMessage("user", largeDocument),
+    },
+    TTL: 30 * time.Minute,
+})
+
+resp, err := client.Complete(ctx, &deebus.Request{
+    Messages: []deebus.Message{
+        deebus.TextMessage("user", "Summarise the document."),
+    },
+    Cache: &deebus.CacheOptions{
+        CachedContent: cache.Name,
+    },
+})
+```
+
+`Client.GetCache`, `ListCaches`, `UpdateCache`, and `DeleteCache` are also available for providers that support explicit cache resources.
+
 ### CacheUsage fields
 
-| Field | Anthropic | OpenAI | Gemini |
-|-------|-----------|--------|--------|
-| `CreatedTokens` | `cache_creation_input_tokens` | — | — |
-| `ReadTokens` | `cache_read_input_tokens` | `prompt_tokens_details.cached_tokens` | `cachedContentTokenCount` |
+| Field           | Anthropic                     | OpenAI                                | Gemini                    |
+| --------------- | ----------------------------- | ------------------------------------- | ------------------------- |
+| `CreatedTokens` | `cache_creation_input_tokens` | -                                     | -                         |
+| `ReadTokens`    | `cache_read_input_tokens`     | `prompt_tokens_details.cached_tokens` | `cachedContentTokenCount` |
 
 ---
 
 ## Token Breakdown
 
-All token counts are real server-reported values — never client-side estimates.
+All token counts are real server-reported values - never client-side estimates.
 
-| Field | Description |
-|-------|-------------|
-| `InputTokens` | True total input tokens. For Anthropic this is `input_tokens + cache_read + cache_creation`; for other providers it matches the API total. |
-| `OutputTokens` | Total output tokens, including reasoning/thinking tokens where applicable. |
-| `TokensUsed` | `InputTokens + OutputTokens`. |
-| `ReasoningTokens` | Subset of `OutputTokens` used for internal reasoning. Populated for OpenAI o-series (`completion_tokens_details.reasoning_tokens`) and Gemini thinking models (`thoughtsTokenCount`). Zero for all other models. |
-| `CacheUsage.CreatedTokens` | Tokens written to the prompt cache this request (Anthropic only). |
-| `CacheUsage.ReadTokens` | Tokens served from cache: Anthropic `cache_read_input_tokens`, OpenAI `prompt_tokens_details.cached_tokens`, Gemini `cachedContentTokenCount`. |
+| Field                      | Description                                                                                                                                                                                                      |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `InputTokens`              | True total input tokens. For Anthropic this is `input_tokens + cache_read + cache_creation`; for other providers it matches the API total.                                                                       |
+| `OutputTokens`             | Total output tokens, including reasoning/thinking tokens where applicable.                                                                                                                                       |
+| `TokensUsed`               | `InputTokens + OutputTokens`.                                                                                                                                                                                    |
+| `ReasoningTokens`          | Subset of `OutputTokens` used for internal reasoning. Populated for OpenAI o-series (`completion_tokens_details.reasoning_tokens`) and Gemini thinking models (`thoughtsTokenCount`). Zero for all other models. |
+| `CacheUsage.CreatedTokens` | Tokens written to the prompt cache this request (Anthropic only).                                                                                                                                                |
+| `CacheUsage.ReadTokens`    | Tokens served from cache: Anthropic `cache_read_input_tokens`, OpenAI `prompt_tokens_details.cached_tokens`, Gemini `cachedContentTokenCount`.                                                                   |
 
 ---
 
@@ -572,10 +685,10 @@ fmt.Printf("cache_writes=%d  cache_reads=%d\n",
 resp, err := client.Complete(ctx, req)
 if err != nil {
     if deebus.IsRetryable(err) {
-        // Transient failure on the last attempt — safe to retry from the caller
+        // Transient failure on the last attempt - safe to retry from the caller
     }
     if !deebus.IsFallback(err) {
-        // HTTP 400 — the request itself is malformed; fix it before retrying
+        // HTTP 400 - the request itself is malformed; fix it before retrying
     }
     log.Printf("provider error: %v", err)
 }
@@ -587,55 +700,21 @@ Both helpers walk the error chain, so they work correctly with wrapped errors.
 
 ## Architecture
 
-```
-github.com/ncobase/deebus
-│
-├── client.go          Client, Config, LoadConfig, NewClient, Health
-├── agent.go           RunAgent, RunAgentStream, AgentConfig, AgentEvent
-├── types.go           Type aliases (re-exports from providers sub-package)
-├── errors.go          IsRetryable, IsFallback
-├── logger.go          Logger interface, NoopLogger, sharedLogger
-├── stats.go           Stats (atomic counters)
-│
-├── providers/
-│   ├── types.go       Provider interface, Request, Response, StreamChunk, …
-│   ├── helpers.go     Message constructors, per-provider format converters
-│   ├── error_types.go ProviderError{Retryable, Fallback, RetryAfter}
-│   ├── errors.go      parseError, networkError
-│   ├── anthropic.go   Anthropic Messages API
-│   ├── openai.go      OpenAI Chat Completions (and compatible endpoints)
-│   ├── gemini.go      Google Gemini generateContent / streamGenerateContent
-│   ├── ollama.go      Ollama /api/chat (local models)
-│   └── cohere.go      Cohere /v2/chat
-│
-├── mcp/
-│   ├── client.go      MCPClient, NewStdioClient, NewHTTPClient, Tools, Execute
-│   ├── conn.go        JSON-RPC 2.0 request/response correlation
-│   ├── stdio.go       stdio subprocess transport
-│   ├── http.go        Streamable HTTP transport (spec 2025-03-26)
-│   └── types.go       MCP protocol types, tool conversion
-│
-├── middleware/
-│   ├── logging.go     LoggingMiddleware
-│   ├── retry.go       RetryMiddleware (equal-jitter exponential backoff)
-│   ├── ratelimit.go   RateLimitMiddleware (continuous token bucket)
-│   └── circuit.go     CircuitBreakerMiddleware
-│
-├── internal/
-│   ├── circuit/       Circuit breaker state machine (Closed → Open → Half-open)
-│   └── log/           Shared Logger interface (avoids circular imports)
-│
-└── examples/
-    ├── 01-completion/ Basic completion, streaming, logging, health check
-    ├── 02-tools/      Single-turn and multi-turn tool calling (manual history)
-    ├── 03-agent/      RunAgent, RunAgentStream, hooks, history trimming
-    ├── 04-embeddings/ Embedding generation and semantic search
-    ├── 05-mcp/        MCP stdio and HTTP transports, agent integration
-    └── 06-caching/    Prompt caching: system prompt, tool definitions, documents
-```
+- `client.go`: `Client`, `Config`, `LoadConfig`, `NewClient`, `Health`
+- `agent.go`: `RunAgent`, `RunAgentStream`, `AgentConfig`, `AgentEvent`
+- `cache.go`: explicit cache resource management on `Client`
+- `types.go`: type aliases re-exported from `providers`
+- `errors.go`: `IsRetryable`, `IsFallback`
+- `logger.go`: `Logger`, `NoopLogger`, `sharedLogger`
+- `stats.go`: atomic request and token counters
+- `providers/`: provider implementations, wire-format helpers, cache types, and auth/error handling
+- `mcp/`: MCP client, transports, protocol types, and tool conversion
+- `middleware/`: logging, retry, rate limit, and circuit breaker layers
+- `internal/`: shared circuit breaker and logger internals
+- `examples/`: completion, tools, agent, embeddings, MCP, and caching demos
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).

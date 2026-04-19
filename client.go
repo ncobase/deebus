@@ -15,8 +15,6 @@ import (
 	"github.com/ncobase/deebus/providers"
 )
 
-// ─── Configuration ────────────────────────────────────────────────────────────
-
 // Config is the top-level client configuration.
 type Config struct {
 	// Providers maps logical provider names to their connection settings.
@@ -59,9 +57,15 @@ type CircuitBreakerConfig struct {
 
 // ProviderConfig holds the connection parameters for one AI provider.
 type ProviderConfig struct {
-	Type    string `yaml:"type"`
-	APIKey  string `yaml:"apiKey"`
-	BaseURL string `yaml:"baseURL"`
+	Type               string             `yaml:"type"`
+	APIKey             string             `yaml:"apiKey"`
+	BearerToken        string             `yaml:"bearerToken"`
+	BaseURL            string             `yaml:"baseURL"`
+	Headers            map[string]string  `yaml:"headers"`
+	Organization       string             `yaml:"organization"`
+	Project            string             `yaml:"project"`
+	UserProject        string             `yaml:"userProject"`
+	CredentialProvider CredentialProvider `yaml:"-"`
 }
 
 // Validate returns an error if the configuration is incomplete or invalid.
@@ -82,9 +86,13 @@ func (c *Config) Validate() error {
 		if !isAllowedURL(cfg.BaseURL) {
 			return fmt.Errorf("provider %q: baseURL must use https or localhost/127.0.0.1", name)
 		}
-		// Ollama is a local service and does not require an API key.
-		if cfg.APIKey == "" && cfg.Type != "ollama" {
-			return fmt.Errorf("provider %q: apiKey required", name)
+		// Ollama is a local service and does not require authentication.
+		if cfg.Type != "ollama" &&
+			cfg.APIKey == "" &&
+			cfg.BearerToken == "" &&
+			cfg.CredentialProvider == nil &&
+			len(cfg.Headers) == 0 {
+			return fmt.Errorf("provider %q: apiKey, bearerToken, credentialProvider, or headers required", name)
 		}
 	}
 	// Validate that every model in the fallback chain references a configured provider.
@@ -107,8 +115,6 @@ func isAllowedURL(u string) bool {
 		strings.HasPrefix(u, "http://0.0.0.0") // Docker / container environments
 }
 
-// ─── Client ───────────────────────────────────────────────────────────────────
-
 // Client dispatches AI requests across a pool of providers with automatic
 // fallback, retry, rate limiting, circuit breaking, and logging.
 //
@@ -125,18 +131,10 @@ type Client struct {
 	mu sync.RWMutex
 }
 
-// LoadConfig reads path, expands ${ENV_VAR} and $ENV_VAR references, and
-// returns a ready-to-use Client.
-//
-// Example YAML:
-//
-//	providers:
-//	  anthropic:
-//	    type: anthropic
-//	    apiKey: ${ANTHROPIC_API_KEY}
-//	    baseURL: https://api.anthropic.com
-//	primary: anthropic/claude-opus-4-6
-//	retry: 3
+// LoadConfig is an optional convenience helper that reads Config from YAML,
+// expands ${ENV_VAR} and $ENV_VAR references, and returns a ready-to-use
+// Client. Applications can call NewClient directly when they already own
+// configuration loading.
 func LoadConfig(path string) (*Client, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -153,12 +151,8 @@ func LoadConfig(path string) (*Client, error) {
 	return NewClient(cfg)
 }
 
-// NewClient creates a Client from cfg, constructing the full middleware stack
-// for each provider.
-//
-// Middleware execution order per provider (outermost → innermost):
-//
-//	Logging → CircuitBreaker → Retry → RateLimit → BaseProvider
+// NewClient creates a Client from cfg and builds the provider middleware stack
+// in this order: Logging -> CircuitBreaker -> Retry -> RateLimit -> BaseProvider.
 func NewClient(cfg Config) (*Client, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
@@ -193,15 +187,13 @@ func (c *Client) SetLogger(l Logger) {
 	c.log.set(l)
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
-
 // Complete sends a completion request. It tries the primary model first, then
 // falls back through the configured fallback list on eligible errors.
 //
-// HTTP 400 (bad request) is never retried or fallen back — it indicates a
+// HTTP 400 (bad request) is never retried or fallen back. It indicates a
 // problem with the request itself, not the provider.
 func (c *Client) Complete(ctx context.Context, req *Request) (*Response, error) {
-	r := *req // copy — never mutate the caller's struct
+	r := *req // Copy the request so the caller's value is never mutated.
 
 	var lastErr error
 	for _, modelStr := range c.modelChain() {
@@ -306,7 +298,7 @@ func (c *Client) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, 
 }
 
 // Health calls Health on every configured provider and returns a map of
-// provider name → error. A nil error means the provider is reachable.
+// provider name to error. A nil error means the provider is reachable.
 // Providers that return a non-nil error are reported but do not prevent
 // other providers from being checked.
 func (c *Client) Health(ctx context.Context) map[string]error {
@@ -319,8 +311,6 @@ func (c *Client) Health(ctx context.Context) map[string]error {
 	}
 	return results
 }
-
-// ─── Internal helpers ─────────────────────────────────────────────────────────
 
 // wrapStream proxies chunks from in to a new channel, recording Stats when
 // the stream ends (success or failure). It also guards against the consumer
@@ -362,7 +352,7 @@ func (c *Client) wrapStream(ctx context.Context, in <-chan *StreamChunk) <-chan 
 	return out
 }
 
-// modelChain returns [primary, fallback1, fallback2, …].
+// modelChain returns [primary, fallback1, fallback2, ...].
 func (c *Client) modelChain() []string {
 	chain := make([]string, 1, 1+len(c.config.Fallbacks))
 	chain[0] = c.config.Primary
@@ -391,9 +381,9 @@ func parseModel(s string) (provider, model string, err error) {
 // buildProvider constructs a base provider and wraps it with the configured
 // middleware stack.
 //
-// Wrapping order (innermost first in code → outermost executes first):
+// Wrapping order, from innermost in code to outermost at runtime:
 //
-//	RateLimit → Retry → CircuitBreaker → Logging
+//	RateLimit -> Retry -> CircuitBreaker -> Logging
 func buildProvider(
 	cfg ProviderConfig,
 	timeout time.Duration,
@@ -401,9 +391,15 @@ func buildProvider(
 	log *sharedLogger,
 ) (providers.Provider, error) {
 	pcfg := providers.Config{
-		APIKey:  cfg.APIKey,
-		BaseURL: cfg.BaseURL,
-		Timeout: timeout,
+		APIKey:             cfg.APIKey,
+		BearerToken:        cfg.BearerToken,
+		BaseURL:            cfg.BaseURL,
+		Timeout:            timeout,
+		Headers:            cloneStringMap(cfg.Headers),
+		Organization:       cfg.Organization,
+		Project:            cfg.Project,
+		UserProject:        cfg.UserProject,
+		CredentialProvider: cfg.CredentialProvider,
 	}
 
 	var p providers.Provider
@@ -422,17 +418,17 @@ func buildProvider(
 		return nil, fmt.Errorf("unknown provider type %q", cfg.Type)
 	}
 
-	// Layer 1 (innermost): rate limiter — throttle individual HTTP calls.
+	// Layer 1: rate limiter.
 	if clientCfg.RateLimit > 0 {
 		p = middleware.NewRateLimit(p, clientCfg.RateLimit)
 	}
 
-	// Layer 2: retry — re-attempt on 429 / 5xx / network with backoff + jitter.
+	// Layer 2: retry.
 	if clientCfg.Retry > 0 {
 		p = middleware.NewRetry(p, clientCfg.Retry)
 	}
 
-	// Layer 3: circuit breaker — stop hammering a persistently-failing provider.
+	// Layer 3: circuit breaker.
 	if clientCfg.CircuitBreaker.MaxFailures > 0 {
 		p = middleware.NewCircuitBreaker(p, circuit.Config{
 			MaxFailures:  clientCfg.CircuitBreaker.MaxFailures,
@@ -440,7 +436,7 @@ func buildProvider(
 		})
 	}
 
-	// Layer 4 (outermost): logging — records duration, tokens, and errors.
+	// Layer 4: logging.
 	p = middleware.NewLogging(p, log)
 
 	return p, nil
@@ -457,4 +453,15 @@ func setDefaults(cfg *Config) {
 	if cfg.CircuitBreaker.MaxFailures > 0 && cfg.CircuitBreaker.ResetTimeout == 0 {
 		cfg.CircuitBreaker.ResetTimeout = 60
 	}
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }

@@ -16,10 +16,6 @@ import (
 // Anthropic keeps this constant; new capabilities are gated by anthropic-beta.
 const anthropicVersion = "2023-06-01"
 
-// anthropicBetaCaching is the beta header value that enables prompt caching.
-// Required for cache_control markers to take effect; harmless when absent.
-const anthropicBetaCaching = "prompt-caching-2024-07-31"
-
 // defaultMaxTokens is used when the caller does not specify MaxTokens.
 // Anthropic's API requires the field; there is no server-side default.
 const defaultMaxTokens = 4096
@@ -59,6 +55,9 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 	if sys := BuildAnthropicSystem(req.Messages); sys != nil {
 		body["system"] = sys
 	}
+	if req.Cache != nil && req.Cache.Control != nil {
+		body["cache_control"] = req.Cache.Control
+	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
 	}
@@ -82,7 +81,11 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	p.setHeaders(httpReq, anthropicHasCacheControl(req))
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -185,6 +188,9 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 	if sys := BuildAnthropicSystem(req.Messages); sys != nil {
 		body["system"] = sys
 	}
+	if req.Cache != nil && req.Cache.Control != nil {
+		body["cache_control"] = req.Cache.Control
+	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
 	}
@@ -208,7 +214,11 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	p.setHeaders(httpReq, anthropicHasCacheControl(req))
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -239,7 +249,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 		var cacheCreated, cacheRead int
 		var stopReason string
 
-		// Unified event shape — fields present depend on event type.
+		// The event shape varies by Anthropic SSE event type.
 		var event struct {
 			Type  string `json:"type"`
 			Index int    `json:"index"`
@@ -393,42 +403,17 @@ func (p *AnthropicProvider) Embed(_ context.Context, _ *EmbedRequest) (*EmbedRes
 
 func (p *AnthropicProvider) Health(_ context.Context) error { return nil }
 
-func (p *AnthropicProvider) setHeaders(r *http.Request, withCaching bool) {
+func (p *AnthropicProvider) setHeaders(r *http.Request, creds Credentials) {
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("x-api-key", p.cfg.APIKey)
-	r.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+	if creds.APIKey != "" {
+		r.Header.Set("x-api-key", creds.APIKey)
+	}
+	switch {
+	case creds.BearerToken != "":
+		r.Header.Set("Authorization", "Bearer "+creds.BearerToken)
+	case creds.APIKey != "":
+		r.Header.Set("Authorization", "Bearer "+creds.APIKey)
+	}
 	r.Header.Set("anthropic-version", anthropicVersion)
-	if withCaching {
-		r.Header.Set("anthropic-beta", anthropicBetaCaching)
-	}
-}
-
-// anthropicHasCacheControl reports whether the request contains any
-// cache_control markers on messages, content blocks, or tools.
-// When true, the prompt-caching beta header is added to the HTTP request.
-func anthropicHasCacheControl(req *Request) bool {
-	for _, msg := range req.Messages {
-		for _, b := range msg.Content {
-			switch bc := b.(type) {
-			case TextContent:
-				if bc.CacheControl != nil {
-					return true
-				}
-			case ImageContent:
-				if bc.CacheControl != nil {
-					return true
-				}
-			case DocumentContent:
-				if bc.CacheControl != nil {
-					return true
-				}
-			}
-		}
-	}
-	for _, t := range req.Tools {
-		if t.CacheControl != nil {
-			return true
-		}
-	}
-	return false
+	applyHeaders(r, creds.Headers)
 }

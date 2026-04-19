@@ -1,9 +1,9 @@
-// Example 04: Embeddings — vector generation and semantic search.
+// Example 04: Embeddings - vector generation and semantic search.
 //
 // Shows how to:
-//   - Embed a corpus of documents with InputType hints.
-//   - Embed a query and find the most similar documents using cosine similarity.
-//   - Compare embedding providers (OpenAI vs Cohere vs Gemini vs Ollama).
+// - Embed a corpus of documents with InputType hints.
+// - Embed a query and find the most similar documents using cosine similarity.
+// - Compare embedding providers (OpenAI vs Cohere vs Gemini vs Ollama).
 //
 // Run:
 //
@@ -43,8 +43,6 @@ func main() {
 	batchDimensions(ctx, client)
 }
 
-// ── Corpus ────────────────────────────────────────────────────────────────────
-
 var corpus = []string{
 	"Go is a statically typed, compiled programming language designed at Google.",
 	"The circuit breaker pattern prevents repeated calls to a failing service.",
@@ -56,10 +54,8 @@ var corpus = []string{
 	"Context propagation in Go allows cancellation signals to flow through layers.",
 }
 
-// ── Semantic search ───────────────────────────────────────────────────────────
-
 func semanticSearch(ctx context.Context, client *deebus.Client) {
-	fmt.Println("── Semantic search ──────────────────────────────────────────────────")
+	fmt.Println("Semantic search")
 
 	// Embed the corpus as retrieval documents.
 	docResp, err := client.Embed(ctx, &deebus.EmbedRequest{
@@ -69,7 +65,7 @@ func semanticSearch(ctx context.Context, client *deebus.Client) {
 	if err != nil {
 		log.Fatalf("embed documents: %v", err)
 	}
-	fmt.Printf("Embedded %d documents  dim=%d\n\n", len(docResp.Embeddings), len(docResp.Embeddings[0]))
+	fmt.Printf("Embedded %d documents (dim=%d)\n\n", len(docResp.Embeddings), len(docResp.Embeddings[0]))
 
 	queries := []string{
 		"How does Go handle concurrency?",
@@ -97,10 +93,8 @@ func semanticSearch(ctx context.Context, client *deebus.Client) {
 	}
 }
 
-// ── Dimension inspection ──────────────────────────────────────────────────────
-
 func batchDimensions(ctx context.Context, client *deebus.Client) {
-	fmt.Println("── Batch embedding ──────────────────────────────────────────────────")
+	fmt.Println("Batch embedding")
 
 	sentences := []string{
 		"Short sentence.",
@@ -116,13 +110,11 @@ func batchDimensions(ctx context.Context, client *deebus.Client) {
 	fmt.Printf("Model: %s\n", resp.Model)
 	for i, vec := range resp.Embeddings {
 		norm := l2Norm(vec)
-		fmt.Printf("  [%d] dim=%-5d  l2_norm=%.4f  text=%q\n",
+		fmt.Printf("  [%d] dim=%d l2_norm=%.4f text=%q\n",
 			i, len(vec), norm, truncate(sentences[i], 40))
 	}
 	fmt.Println()
 }
-
-// ── Similarity helpers ────────────────────────────────────────────────────────
 
 type result struct {
 	text  string
@@ -171,7 +163,7 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return s[:n] + "..."
 }
 
 func requireEnv(key string) string {

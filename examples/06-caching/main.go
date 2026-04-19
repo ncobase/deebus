@@ -1,19 +1,19 @@
-// Example 06: Prompt Caching — reduce token costs on repeated static context.
+// Example 06: Prompt caching for repeated static context.
 //
 // Shows how to:
-//   - Mark system prompts and tool definitions for Anthropic prompt caching.
-//   - Observe CacheUsage (created/read tokens) in the response.
-//   - Mark large user-turn documents (e.g. a retrieved PDF) for caching.
-//   - Read OpenAI's automatic cache stats (no markers required).
-//   - Use UserID for per-user attribution on both providers.
+// - Mark system prompts and tool definitions for Anthropic prompt caching.
+// - Observe CacheUsage (created/read tokens) in the response.
+// - Mark large user-turn documents (e.g. a retrieved PDF) for caching.
+// - Read OpenAI's automatic cache stats (no markers required).
+// - Use UserID for per-user attribution on both providers.
 //
 // Provider support:
-//   - Anthropic: explicit cache_control markers; 90% discount on cache hits,
-//     25% write surcharge (5-min TTL) or 100% write surcharge (1-hour TTL).
-//     Minimum block: 1024 tokens (Sonnet), 4096 tokens (Opus/Haiku 4.5+).
-//     Requires prompt-caching-2024-07-31 beta header (added automatically).
-//   - OpenAI: fully automatic; 50% discount on ≥1024-token prefix; zero config.
-//   - Other providers: CacheControl markers are silently ignored.
+// - Anthropic: explicit cache_control markers and top-level automatic caching.
+// Minimum cacheable block size varies by model; consult Anthropic's current
+// prompt-caching documentation when sizing reusable prefixes.
+// - OpenAI: automatic prefix caching with request-level cache hints via
+// Request.Cache.Key and Request.Cache.Retention.
+// - Other providers: CacheControl markers are silently ignored.
 //
 // Run:
 //
@@ -54,16 +54,12 @@ func main() {
 	cacheLargeDocument(ctx, client)
 }
 
-// ── Cache a system prompt ─────────────────────────────────────────────────────
-
-// cacheSystemPrompt demonstrates caching a long, static system prompt.
-// On the first request the prompt is written to cache (CacheUsage.CreatedTokens).
-// Subsequent requests within the 5-minute TTL serve from cache (CacheUsage.ReadTokens).
+// cacheSystemPrompt caches a long, static system prompt.
+// The first request writes the prefix. Later requests reuse it within TTL.
 func cacheSystemPrompt(ctx context.Context, client *deebus.Client) {
-	fmt.Println("── Cached system prompt ─────────────────────────────────────────────")
+	fmt.Println("Cached system prompt")
 
-	// A realistic system prompt that exceeds the 1024-token minimum.
-	// In production this would be a large policy document, persona, or ruleset.
+	// The prompt exceeds Anthropic's minimum cacheable block size.
 	systemText := buildLargeSystemPrompt()
 
 	makeRequest := func(turn int) {
@@ -72,10 +68,8 @@ func cacheSystemPrompt(ctx context.Context, client *deebus.Client) {
 				{
 					Role: "system",
 					Content: []deebus.ContentBlock{
-						// Mark the text block for caching at this breakpoint.
-						// TTL omitted → 5-minute default (1.25× write cost).
-						// Use TTL: "1h" for content queried frequently over longer periods:
-						//   CacheControl: &deebus.CacheControl{Type: "ephemeral", TTL: "1h"}
+						// Mark this block as the cache boundary.
+						// Omitted TTL uses Anthropic's default 5-minute lifetime.
 						deebus.TextContent{
 							Type:         "text",
 							Text:         systemText,
@@ -96,20 +90,17 @@ func cacheSystemPrompt(ctx context.Context, client *deebus.Client) {
 		printCacheStats(resp.CacheUsage)
 	}
 
-	// First call: cache miss → tokens written to cache.
+	// First call writes the prefix.
 	makeRequest(1)
-	// Second call (within TTL): cache hit → system prompt served from cache.
+	// Second call can reuse the cached prefix.
 	makeRequest(2)
 	fmt.Println()
 }
 
-// ── Cache tool definitions ────────────────────────────────────────────────────
-
-// cacheToolDefinitions demonstrates marking the last tool as a cache boundary.
-// When the model sees the same tool list on repeated agent iterations, the
-// schema is served from cache instead of being re-encoded each time.
+// cacheToolDefinitions marks the last tool as the cache boundary.
+// Repeated requests can reuse the tool schema prefix.
 func cacheToolDefinitions(ctx context.Context, client *deebus.Client) {
-	fmt.Println("── Cached tool definitions ──────────────────────────────────────────")
+	fmt.Println("Cached tool definitions")
 
 	tools := []deebus.Tool{
 		{
@@ -135,8 +126,7 @@ func cacheToolDefinitions(ctx context.Context, client *deebus.Client) {
 					"required":   []string{"customer_id"},
 				},
 			},
-			// Cache the entire tools array at this boundary.
-			// On repeated calls (e.g. agent loop iterations) the schema is cached.
+			// Cache the full tools array at this boundary.
 			CacheControl: &deebus.CacheControl{Type: "ephemeral"},
 		},
 	}
@@ -158,15 +148,12 @@ func cacheToolDefinitions(ctx context.Context, client *deebus.Client) {
 	fmt.Println()
 }
 
-// ── Cache a large retrieved document ─────────────────────────────────────────
-
-// cacheLargeDocument demonstrates caching a large document in the user turn.
-// This is common in RAG pipelines: the retrieved document is static across
-// multiple follow-up questions about the same content.
+// cacheLargeDocument caches a large retrieved document in the user turn.
+// This fits repeated follow-up questions over the same source content.
 func cacheLargeDocument(ctx context.Context, client *deebus.Client) {
-	fmt.Println("── Cached document in user turn ─────────────────────────────────────")
+	fmt.Println("Cached document in user turn")
 
-	// Simulate a large retrieved document (must exceed the minimum token threshold).
+	// The document exceeds the provider's minimum cache threshold.
 	document := buildLargeDocument()
 
 	askQuestion := func(question string) {
@@ -176,7 +163,7 @@ func cacheLargeDocument(ctx context.Context, client *deebus.Client) {
 				{
 					Role: "user",
 					Content: []deebus.ContentBlock{
-						// The document is cached; only the question changes per request.
+						// Only the question changes between requests.
 						deebus.TextContent{
 							Type:         "text",
 							Text:         "Document:\n\n" + document,
@@ -204,11 +191,9 @@ func cacheLargeDocument(ctx context.Context, client *deebus.Client) {
 	fmt.Println()
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 func printCacheStats(u deebus.CacheUsage) {
 	if u.CreatedTokens > 0 || u.ReadTokens > 0 {
-		fmt.Printf("  cache: wrote=%d  read=%d\n", u.CreatedTokens, u.ReadTokens)
+		fmt.Printf("  cache: wrote=%d read=%d\n", u.CreatedTokens, u.ReadTokens)
 	} else {
 		fmt.Println("  cache: no cache activity (token count may be below minimum threshold)")
 	}

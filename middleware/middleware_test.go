@@ -12,16 +12,14 @@ import (
 	"github.com/ncobase/deebus/providers"
 )
 
-// ─── mock provider ─────────────────────────────────────────────────────────────
-
 // mockProvider is a test double for providers.Provider. Each call invokes
 // the registered hook; if the hook is nil, it returns a zero-value success.
 type mockProvider struct {
-	name        string
-	completeFn  func(context.Context, *providers.Request) (*providers.Response, error)
-	streamFn    func(context.Context, *providers.Request) (<-chan *providers.StreamChunk, error)
-	embedFn     func(context.Context, *providers.EmbedRequest) (*providers.EmbedResponse, error)
-	callCount   atomic.Int64
+	name       string
+	completeFn func(context.Context, *providers.Request) (*providers.Response, error)
+	streamFn   func(context.Context, *providers.Request) (<-chan *providers.StreamChunk, error)
+	embedFn    func(context.Context, *providers.EmbedRequest) (*providers.EmbedResponse, error)
+	callCount  atomic.Int64
 }
 
 func (m *mockProvider) Name() string { return m.name }
@@ -55,6 +53,73 @@ func (m *mockProvider) Embed(ctx context.Context, req *providers.EmbedRequest) (
 
 func (m *mockProvider) Health(ctx context.Context) error { return nil }
 
+type mockCacheProvider struct {
+	*mockProvider
+	createCacheFn func(context.Context, *providers.CreateCacheRequest) (*providers.Cache, error)
+	getCacheFn    func(context.Context, string) (*providers.Cache, error)
+	listCachesFn  func(context.Context, *providers.ListCachesRequest) (*providers.ListCachesResponse, error)
+	updateCacheFn func(context.Context, *providers.UpdateCacheRequest) (*providers.Cache, error)
+	deleteCacheFn func(context.Context, string) error
+	createCalls   atomic.Int64
+	getCalls      atomic.Int64
+	listCalls     atomic.Int64
+	updateCalls   atomic.Int64
+	deleteCalls   atomic.Int64
+}
+
+func newMockCacheProvider() *mockCacheProvider {
+	return &mockCacheProvider{mockProvider: &mockProvider{name: "mock"}}
+}
+
+func (m *mockCacheProvider) CreateCache(ctx context.Context, req *providers.CreateCacheRequest) (*providers.Cache, error) {
+	m.createCalls.Add(1)
+	if m.createCacheFn != nil {
+		return m.createCacheFn(ctx, req)
+	}
+	return &providers.Cache{Name: "cachedContents/demo", Provider: m.Name(), Model: req.Model}, nil
+}
+
+func (m *mockCacheProvider) GetCache(ctx context.Context, name string) (*providers.Cache, error) {
+	m.getCalls.Add(1)
+	if m.getCacheFn != nil {
+		return m.getCacheFn(ctx, name)
+	}
+	return &providers.Cache{Name: name, Provider: m.Name()}, nil
+}
+
+func (m *mockCacheProvider) ListCaches(ctx context.Context, req *providers.ListCachesRequest) (*providers.ListCachesResponse, error) {
+	m.listCalls.Add(1)
+	if m.listCachesFn != nil {
+		return m.listCachesFn(ctx, req)
+	}
+	return &providers.ListCachesResponse{
+		Items: []providers.Cache{{Name: "cachedContents/demo", Provider: m.Name()}},
+	}, nil
+}
+
+func (m *mockCacheProvider) UpdateCache(ctx context.Context, req *providers.UpdateCacheRequest) (*providers.Cache, error) {
+	m.updateCalls.Add(1)
+	if m.updateCacheFn != nil {
+		return m.updateCacheFn(ctx, req)
+	}
+	return &providers.Cache{Name: req.Name, Provider: m.Name()}, nil
+}
+
+func (m *mockCacheProvider) DeleteCache(ctx context.Context, name string) error {
+	m.deleteCalls.Add(1)
+	if m.deleteCacheFn != nil {
+		return m.deleteCacheFn(ctx, name)
+	}
+	return nil
+}
+
+type noopLogger struct{}
+
+func (noopLogger) Debug(string, ...any) {}
+func (noopLogger) Info(string, ...any)  {}
+func (noopLogger) Warn(string, ...any)  {}
+func (noopLogger) Error(string, ...any) {}
+
 // providerErr builds a ProviderError for use in tests.
 func providerErr(status int, retryable, fallback bool) *providers.ProviderError {
 	et := providers.ErrTypeProvider
@@ -75,8 +140,6 @@ func providerErr(status int, retryable, fallback bool) *providers.ProviderError 
 		Fallback:   fallback,
 	}
 }
-
-// ─── RetryMiddleware tests ─────────────────────────────────────────────────────
 
 func TestRetrySuccessOnFirstAttempt(t *testing.T) {
 	mock := &mockProvider{name: "mock"}
@@ -102,7 +165,7 @@ func TestRetryExhaustedRetryableError(t *testing.T) {
 			return nil, retryableErr
 		},
 	}
-	// maxRetries=2 → 3 total attempts
+	// maxRetries=2 -> 3 total attempts
 	r := NewRetry(mock, 2)
 	r.baseDelay = time.Millisecond // speed up test
 
@@ -185,7 +248,7 @@ func TestRetryHonoursRetryAfterHint(t *testing.T) {
 		t.Fatalf("expected success after retry, got %v", err)
 	}
 	if elapsed < hint {
-		t.Errorf("expected wait ≥ %v (Retry-After), got %v", hint, elapsed)
+		t.Errorf("expected wait >= %v (Retry-After), got %v", hint, elapsed)
 	}
 }
 
@@ -239,7 +302,31 @@ func TestRetrySuccessAfterTransientFailure(t *testing.T) {
 	}
 }
 
-// ─── RateLimitMiddleware tests ─────────────────────────────────────────────────
+func TestRetryCreateCacheSuccessAfterTransientFailure(t *testing.T) {
+	attempts := 0
+	mock := newMockCacheProvider()
+	mock.createCacheFn = func(context.Context, *providers.CreateCacheRequest) (*providers.Cache, error) {
+		attempts++
+		if attempts < 3 {
+			return nil, providerErr(http.StatusServiceUnavailable, true, true)
+		}
+		return &providers.Cache{Name: "cachedContents/recovered", Provider: "mock"}, nil
+	}
+
+	r := NewRetry(mock, 3)
+	r.baseDelay = time.Millisecond
+
+	cache, err := r.CreateCache(context.Background(), &providers.CreateCacheRequest{Model: "gemini-2.5-flash"})
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if cache.Name != "cachedContents/recovered" {
+		t.Fatalf("cache.Name = %q, want %q", cache.Name, "cachedContents/recovered")
+	}
+	if attempts != 3 {
+		t.Fatalf("expected 3 attempts, got %d", attempts)
+	}
+}
 
 func TestRateLimitDisabled(t *testing.T) {
 	mock := &mockProvider{name: "mock"}
@@ -259,7 +346,7 @@ func TestRateLimitDisabled(t *testing.T) {
 
 func TestRateLimitThrottles(t *testing.T) {
 	mock := &mockProvider{name: "mock"}
-	// 10 req/s → bucket capacity = 10 tokens, 1 token per 100 ms.
+	// 10 req/s -> bucket capacity = 10 tokens, 1 token per 100 ms.
 	const rps = 10
 	r := NewRateLimit(mock, rps)
 
@@ -280,13 +367,13 @@ func TestRateLimitThrottles(t *testing.T) {
 	// At 10 req/s, one refill takes 100 ms. Allow generous lower bound.
 	const minWait = 80 * time.Millisecond
 	if elapsed < minWait {
-		t.Errorf("rate limiter too permissive after bucket drained: waited only %v, expected ≥ %v", elapsed, minWait)
+		t.Errorf("rate limiter too permissive after bucket drained: waited only %v, expected >= %v", elapsed, minWait)
 	}
 }
 
 func TestRateLimitContextCancellation(t *testing.T) {
 	mock := &mockProvider{name: "mock"}
-	// 1 req/s — subsequent requests must wait 1s
+	// 1 req/s - subsequent requests must wait 1s
 	r := NewRateLimit(mock, 1)
 
 	// Drain the initial token.
@@ -294,7 +381,7 @@ func TestRateLimitContextCancellation(t *testing.T) {
 		t.Fatalf("first call failed: %v", err)
 	}
 
-	// Cancel after 50ms — well before the 1s refill.
+	// Cancel after 50ms - well before the 1s refill.
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
@@ -307,7 +394,29 @@ func TestRateLimitContextCancellation(t *testing.T) {
 	}
 }
 
-// ─── CircuitBreakerMiddleware tests ───────────────────────────────────────────
+func TestRateLimitCreateCacheThrottles(t *testing.T) {
+	mock := newMockCacheProvider()
+	const rps = 10
+	r := NewRateLimit(mock, rps)
+
+	req := &providers.CreateCacheRequest{Model: "gemini-2.5-flash"}
+	for i := 0; i < rps; i++ {
+		if _, err := r.CreateCache(context.Background(), req); err != nil {
+			t.Fatalf("unexpected error draining bucket on request %d: %v", i, err)
+		}
+	}
+
+	start := time.Now()
+	if _, err := r.CreateCache(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error after refill: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	const minWait = 80 * time.Millisecond
+	if elapsed < minWait {
+		t.Errorf("rate limiter too permissive after bucket drained: waited only %v, expected >= %v", elapsed, minWait)
+	}
+}
 
 func TestCircuitBreakerOpensAfterMaxFailures(t *testing.T) {
 	serverErr := providerErr(http.StatusInternalServerError, true, true)
@@ -365,7 +474,7 @@ func TestCircuitBreakerAuthErrorDoesNotTrip(t *testing.T) {
 
 	req := &providers.Request{}
 
-	// Fire many auth errors — the circuit must stay closed.
+	// Fire many auth errors - the circuit must stay closed.
 	for i := 0; i < 10; i++ {
 		cb.Complete(context.Background(), req) //nolint:errcheck
 	}
@@ -471,7 +580,7 @@ func TestCircuitBreakerReopensOnHalfOpenFailure(t *testing.T) {
 		cb.Complete(context.Background(), req) //nolint:errcheck
 	}
 
-	// Wait for reset, then probe — this will also fail.
+	// Wait for reset, then probe - this will also fail.
 	time.Sleep(30 * time.Millisecond)
 	cb.Complete(context.Background(), req) //nolint:errcheck
 
@@ -486,8 +595,186 @@ func TestCircuitBreakerReopensOnHalfOpenFailure(t *testing.T) {
 	}
 }
 
-// ─── backoff unit test ─────────────────────────────────────────────────────────
+func TestCircuitBreakerCreateCacheOpensAfterMaxFailures(t *testing.T) {
+	serverErr := providerErr(http.StatusInternalServerError, true, true)
+	mock := newMockCacheProvider()
+	mock.createCacheFn = func(context.Context, *providers.CreateCacheRequest) (*providers.Cache, error) {
+		return nil, serverErr
+	}
 
+	cb := NewCircuitBreaker(mock, circuit.Config{
+		MaxFailures:      2,
+		ResetTimeout:     time.Minute,
+		HalfOpenRequests: 1,
+	})
+
+	req := &providers.CreateCacheRequest{Model: "gemini-2.5-flash"}
+	for i := 0; i < 2; i++ {
+		if _, err := cb.CreateCache(context.Background(), req); err == nil {
+			t.Fatalf("call %d: expected provider failure", i+1)
+		}
+	}
+
+	_, err := cb.CreateCache(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected circuit breaker error on third call")
+	}
+	pe := unwrap(err)
+	if pe == nil || pe.Message != "circuit breaker open" {
+		t.Fatalf("expected circuit breaker open error, got %v", err)
+	}
+	if got := mock.createCalls.Load(); got != 2 {
+		t.Fatalf("expected provider create calls = 2, got %d", got)
+	}
+}
+
+func TestCacheMiddlewarePassThrough(t *testing.T) {
+	tests := []struct {
+		name string
+		wrap func(*mockCacheProvider) providers.CacheProvider
+	}{
+		{
+			name: "logging",
+			wrap: func(p *mockCacheProvider) providers.CacheProvider {
+				return NewLogging(p, noopLogger{})
+			},
+		},
+		{
+			name: "ratelimit",
+			wrap: func(p *mockCacheProvider) providers.CacheProvider {
+				return NewRateLimit(p, 1000)
+			},
+		},
+		{
+			name: "retry",
+			wrap: func(p *mockCacheProvider) providers.CacheProvider {
+				return NewRetry(p, 1)
+			},
+		},
+		{
+			name: "circuit",
+			wrap: func(p *mockCacheProvider) providers.CacheProvider {
+				return NewCircuitBreaker(p, circuit.Config{
+					MaxFailures:      2,
+					ResetTimeout:     time.Minute,
+					HalfOpenRequests: 1,
+				})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := newMockCacheProvider()
+			cp := tt.wrap(mock)
+
+			created, err := cp.CreateCache(context.Background(), &providers.CreateCacheRequest{Model: "gemini-2.5-flash"})
+			if err != nil {
+				t.Fatalf("CreateCache: %v", err)
+			}
+			if created.Name != "cachedContents/demo" {
+				t.Fatalf("CreateCache.Name = %q, want %q", created.Name, "cachedContents/demo")
+			}
+
+			got, err := cp.GetCache(context.Background(), "cachedContents/demo")
+			if err != nil {
+				t.Fatalf("GetCache: %v", err)
+			}
+			if got.Name != "cachedContents/demo" {
+				t.Fatalf("GetCache.Name = %q, want %q", got.Name, "cachedContents/demo")
+			}
+
+			list, err := cp.ListCaches(context.Background(), &providers.ListCachesRequest{PageSize: 10})
+			if err != nil {
+				t.Fatalf("ListCaches: %v", err)
+			}
+			if len(list.Items) != 1 || list.Items[0].Name != "cachedContents/demo" {
+				t.Fatalf("ListCaches = %+v", list)
+			}
+
+			updated, err := cp.UpdateCache(context.Background(), &providers.UpdateCacheRequest{Name: "cachedContents/demo"})
+			if err != nil {
+				t.Fatalf("UpdateCache: %v", err)
+			}
+			if updated.Name != "cachedContents/demo" {
+				t.Fatalf("UpdateCache.Name = %q, want %q", updated.Name, "cachedContents/demo")
+			}
+
+			if err := cp.DeleteCache(context.Background(), "cachedContents/demo"); err != nil {
+				t.Fatalf("DeleteCache: %v", err)
+			}
+
+			if mock.createCalls.Load() != 1 ||
+				mock.getCalls.Load() != 1 ||
+				mock.listCalls.Load() != 1 ||
+				mock.updateCalls.Load() != 1 ||
+				mock.deleteCalls.Load() != 1 {
+				t.Fatalf("unexpected cache call counts: create=%d get=%d list=%d update=%d delete=%d",
+					mock.createCalls.Load(),
+					mock.getCalls.Load(),
+					mock.listCalls.Load(),
+					mock.updateCalls.Load(),
+					mock.deleteCalls.Load(),
+				)
+			}
+		})
+	}
+}
+
+func TestCacheMiddlewareUnsupportedProvider(t *testing.T) {
+	tests := []struct {
+		name string
+		wrap func(*mockProvider) providers.Provider
+	}{
+		{
+			name: "logging",
+			wrap: func(p *mockProvider) providers.Provider {
+				return NewLogging(p, noopLogger{})
+			},
+		},
+		{
+			name: "ratelimit",
+			wrap: func(p *mockProvider) providers.Provider {
+				return NewRateLimit(p, 1000)
+			},
+		},
+		{
+			name: "retry",
+			wrap: func(p *mockProvider) providers.Provider {
+				return NewRetry(p, 1)
+			},
+		},
+		{
+			name: "circuit",
+			wrap: func(p *mockProvider) providers.Provider {
+				return NewCircuitBreaker(p, circuit.Config{
+					MaxFailures:      2,
+					ResetTimeout:     time.Minute,
+					HalfOpenRequests: 1,
+				})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := tt.wrap(&mockProvider{name: "mock"})
+			cp, ok := p.(providers.CacheProvider)
+			if !ok {
+				t.Fatalf("%s middleware does not implement CacheProvider", tt.name)
+			}
+			_, err := cp.CreateCache(context.Background(), &providers.CreateCacheRequest{Model: "gemini-2.5-flash"})
+			if err == nil {
+				t.Fatal("expected unsupported cache management error")
+			}
+			if got := err.Error(); got != `provider "mock" does not support cache management` {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// backoff unit test
 func TestBackoffWithHint(t *testing.T) {
 	r := NewRetry(&mockProvider{name: "mock"}, 3)
 	hint := 5 * time.Second

@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-// ─── In-process mock transport ────────────────────────────────────────────────
-
 // mockTransport simulates an MCP server by replying to calls directly,
 // without any subprocess or network.
 type mockTransport struct {
@@ -87,8 +85,6 @@ func (m *mockTransport) sendNotification(method string) {
 	}
 }
 
-// ─── Mock server setup ────────────────────────────────────────────────────────
-
 func newTestClient(t *testing.T, tools []Tool) (*Client, *mockTransport) {
 	t.Helper()
 
@@ -126,8 +122,6 @@ func sampleTools() []Tool {
 		{Name: "calculate", Description: "Do math", InputSchema: json.RawMessage(`{"type":"object","properties":{"expr":{"type":"string"}}}`)},
 	}
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 func TestClientInitialize(t *testing.T) {
 	c, _ := newTestClient(t, sampleTools())

@@ -4,9 +4,9 @@
 //
 //	ANTHROPIC_API_KEY=sk-... go run .
 //
-// Or with a config file:
+// Optional YAML helper:
 //
-//	go run . -config ../../examples/deebus.yaml
+//	go run . -config ./config.yaml
 package main
 
 import (
@@ -22,7 +22,7 @@ import (
 )
 
 func main() {
-	config := flag.String("config", "", "path to deebus.yaml (optional)")
+	config := flag.String("config", "", "path to YAML config (optional)")
 	flag.Parse()
 
 	var client *deebus.Client
@@ -49,7 +49,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Structured logging via slog — any Logger implementation works.
+	// Structured logging via slog - any Logger implementation works.
 	client.SetLogger(slogLogger{})
 
 	ctx := context.Background()
@@ -62,7 +62,7 @@ func main() {
 
 // singleTurn demonstrates a basic completion request.
 func singleTurn(ctx context.Context, client *deebus.Client) {
-	fmt.Println("── Single-turn completion ───────────────────────────────────────────")
+	fmt.Println("Single-turn completion")
 
 	resp, err := client.Complete(ctx, &deebus.Request{
 		Messages: []deebus.Message{
@@ -77,13 +77,13 @@ func singleTurn(ctx context.Context, client *deebus.Client) {
 	}
 
 	fmt.Println(resp.Content)
-	fmt.Printf("\nprovider=%s  model=%s  tokens=%d  finish=%s\n\n",
+	fmt.Printf("\nprovider=%s model=%s tokens=%d finish=%s\n\n",
 		resp.Provider, resp.Model, resp.TokensUsed, resp.FinishReason)
 }
 
 // streaming demonstrates token-by-token SSE streaming.
 func streaming(ctx context.Context, client *deebus.Client) {
-	fmt.Println("── Streaming ────────────────────────────────────────────────────────")
+	fmt.Println("Streaming")
 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -114,7 +114,7 @@ func streaming(ctx context.Context, client *deebus.Client) {
 
 // healthCheck calls Health on every configured provider.
 func healthCheck(ctx context.Context, client *deebus.Client) {
-	fmt.Println("── Health check ─────────────────────────────────────────────────────")
+	fmt.Println("Health check")
 
 	results := client.Health(ctx)
 	for provider, err := range results {
@@ -122,7 +122,7 @@ func healthCheck(ctx context.Context, client *deebus.Client) {
 		if err != nil {
 			status = fmt.Sprintf("ERROR: %v", err)
 		}
-		fmt.Printf("  %-12s %s\n", provider, status)
+		fmt.Printf("  %s: %s\n", provider, status)
 	}
 	fmt.Println()
 }
@@ -130,12 +130,10 @@ func healthCheck(ctx context.Context, client *deebus.Client) {
 // printStats shows aggregate request and token counters.
 func printStats(client *deebus.Client) {
 	total, input, output, success, failed := client.Stats.Get()
-	fmt.Printf("── Stats ────────────────────────────────────────────────────────────\n")
-	fmt.Printf("  requests=%d  input=%d  output=%d  total=%d  success=%d  failed=%d\n",
+	fmt.Println("Stats")
+	fmt.Printf("  requests=%d input=%d output=%d total=%d success=%d failed=%d\n",
 		total, input, output, input+output, success, failed)
 }
-
-// ── Logger bridge ─────────────────────────────────────────────────────────────
 
 type slogLogger struct{}
 
@@ -143,8 +141,6 @@ func (slogLogger) Debug(msg string, f ...any) { slog.Debug(msg, f...) }
 func (slogLogger) Info(msg string, f ...any)  { slog.Info(msg, f...) }
 func (slogLogger) Warn(msg string, f ...any)  { slog.Warn(msg, f...) }
 func (slogLogger) Error(msg string, f ...any) { slog.Error(msg, f...) }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 func requireEnv(key string) string {
 	v := os.Getenv(key)

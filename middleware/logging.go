@@ -104,3 +104,127 @@ func (m *LoggingMiddleware) Embed(ctx context.Context, req *providers.EmbedReque
 func (m *LoggingMiddleware) Health(ctx context.Context) error {
 	return m.provider.Health(ctx)
 }
+
+func (m *LoggingMiddleware) CreateCache(ctx context.Context, req *providers.CreateCacheRequest) (*providers.Cache, error) {
+	cp, err := cacheProvider(m.provider)
+	if err != nil {
+		return nil, err
+	}
+	start := time.Now()
+	m.logger.Debug("cache.create.start", "provider", m.provider.Name(), "model", req.Model)
+	resp, err := cp.CreateCache(ctx, req)
+	if err != nil {
+		m.logger.Error("cache.create.error",
+			"provider", m.provider.Name(),
+			"model", req.Model,
+			"duration", time.Since(start),
+			"error", err,
+		)
+		return nil, err
+	}
+	m.logger.Info("cache.create.ok",
+		"provider", m.provider.Name(),
+		"name", resp.Name,
+		"duration", time.Since(start),
+	)
+	return resp, nil
+}
+
+func (m *LoggingMiddleware) GetCache(ctx context.Context, name string) (*providers.Cache, error) {
+	cp, err := cacheProvider(m.provider)
+	if err != nil {
+		return nil, err
+	}
+	start := time.Now()
+	m.logger.Debug("cache.get.start", "provider", m.provider.Name(), "name", name)
+	resp, err := cp.GetCache(ctx, name)
+	if err != nil {
+		m.logger.Error("cache.get.error",
+			"provider", m.provider.Name(),
+			"name", name,
+			"duration", time.Since(start),
+			"error", err,
+		)
+		return nil, err
+	}
+	m.logger.Info("cache.get.ok",
+		"provider", m.provider.Name(),
+		"name", name,
+		"duration", time.Since(start),
+	)
+	return resp, nil
+}
+
+func (m *LoggingMiddleware) ListCaches(ctx context.Context, req *providers.ListCachesRequest) (*providers.ListCachesResponse, error) {
+	cp, err := cacheProvider(m.provider)
+	if err != nil {
+		return nil, err
+	}
+	start := time.Now()
+	m.logger.Debug("cache.list.start", "provider", m.provider.Name())
+	resp, err := cp.ListCaches(ctx, req)
+	if err != nil {
+		m.logger.Error("cache.list.error",
+			"provider", m.provider.Name(),
+			"duration", time.Since(start),
+			"error", err,
+		)
+		return nil, err
+	}
+	m.logger.Info("cache.list.ok",
+		"provider", m.provider.Name(),
+		"items", len(resp.Items),
+		"duration", time.Since(start),
+	)
+	return resp, nil
+}
+
+func (m *LoggingMiddleware) UpdateCache(ctx context.Context, req *providers.UpdateCacheRequest) (*providers.Cache, error) {
+	cp, err := cacheProvider(m.provider)
+	if err != nil {
+		return nil, err
+	}
+	start := time.Now()
+	m.logger.Debug("cache.update.start", "provider", m.provider.Name(), "name", req.Name)
+	resp, err := cp.UpdateCache(ctx, req)
+	if err != nil {
+		m.logger.Error("cache.update.error",
+			"provider", m.provider.Name(),
+			"name", req.Name,
+			"duration", time.Since(start),
+			"error", err,
+		)
+		return nil, err
+	}
+	m.logger.Info("cache.update.ok",
+		"provider", m.provider.Name(),
+		"name", req.Name,
+		"duration", time.Since(start),
+	)
+	return resp, nil
+}
+
+func (m *LoggingMiddleware) DeleteCache(ctx context.Context, name string) error {
+	cp, err := cacheProvider(m.provider)
+	if err != nil {
+		return err
+	}
+	start := time.Now()
+	m.logger.Debug("cache.delete.start", "provider", m.provider.Name(), "name", name)
+	err = cp.DeleteCache(ctx, name)
+	if err != nil {
+		m.logger.Error("cache.delete.error",
+			"provider", m.provider.Name(),
+			"name", name,
+			"duration", time.Since(start),
+			"error", err,
+		)
+		return err
+	}
+	m.logger.Info("cache.delete.ok",
+		"provider", m.provider.Name(),
+		"name", name,
+		"duration", time.Since(start),
+	)
+	return nil
+}

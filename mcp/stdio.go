@@ -10,7 +10,7 @@ import (
 )
 
 // stdioTransport launches a subprocess and communicates with it via its
-// stdin (client→server) and stdout (server→client) using newline-delimited
+// stdin (client->server) and stdout (server->client) using newline-delimited
 // JSON-RPC 2.0 messages, as specified by the MCP stdio transport.
 //
 // The subprocess's stderr is forwarded to os.Stderr so log output is visible.

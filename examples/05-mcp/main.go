@@ -1,16 +1,17 @@
-// Example 05: MCP Client — stdio and HTTP transports, agent integration.
+// Example 05: MCP Client - stdio and HTTP transports, agent integration.
 //
 // Shows how to:
-//   - Connect to a local MCP server launched as a subprocess (stdio transport).
-//   - Connect to a remote MCP server via Streamable HTTP (spec 2025-03-26).
-//   - Fetch tool definitions and run an agent that calls MCP tools automatically.
-//   - Observe tool list change notifications.
-//   - Call MCP tools directly without an agent loop.
+// - Connect to a local MCP server launched as a subprocess (stdio transport).
+// - Connect to a remote MCP server via Streamable HTTP (spec 2025-03-26).
+// - Fetch tool definitions and run an agent that calls MCP tools automatically.
+// - Observe tool list change notifications.
+// - Call MCP tools directly without an agent loop.
 //
 // Prerequisites for the stdio demo:
 //
 //	npm install -g @modelcontextprotocol/server-filesystem
-//	  (or let npx fetch it on first run)
+//
+// (or let npx fetch it on first run)
 //
 // Run:
 //
@@ -56,10 +57,9 @@ func main() {
 	httpDemo(ctx, client)
 }
 
-// ── stdio transport ───────────────────────────────────────────────────────────
-
+// stdio transport
 func stdioDemo(ctx context.Context, client *deebus.Client) {
-	fmt.Println("── MCP stdio (filesystem server) ────────────────────────────────────")
+	fmt.Println("MCP stdio")
 
 	// Launch the MCP filesystem server as a child process.
 	// The server communicates via its stdin/stdout using newline-delimited JSON-RPC 2.0.
@@ -74,7 +74,7 @@ func stdioDemo(ctx context.Context, client *deebus.Client) {
 	}
 	defer mcpClient.Close()
 
-	fmt.Printf("Server  : %s %s\n",
+	fmt.Printf("Server: %s %s\n",
 		mcpClient.ServerInfo().Name, mcpClient.ServerInfo().Version)
 
 	// Tools() fetches all pages of tools/list, caches the result, and auto-invalidates
@@ -84,16 +84,16 @@ func stdioDemo(ctx context.Context, client *deebus.Client) {
 		fmt.Printf("tools/list error: %v\n\n", err)
 		return
 	}
-	fmt.Printf("Tools   : %d available\n", len(tools))
+	fmt.Printf("Tools: %d available\n", len(tools))
 	for _, t := range tools {
-		fmt.Printf("          • %s — %s\n", t.Function.Name, t.Function.Description)
+		fmt.Printf("  %s: %s\n", t.Function.Name, t.Function.Description)
 	}
 	fmt.Println()
 
-	// Direct tool call — useful when you know exactly which tool to call.
+	// Direct tool call - useful when you know exactly which tool to call.
 	directCall(ctx, mcpClient)
 
-	// Agent integration — pass mcpClient.Execute as the AgentToolFunc.
+	// Agent integration - pass mcpClient.Execute as the AgentToolFunc.
 	agentWithMCP(ctx, client, mcpClient)
 }
 
@@ -151,21 +151,19 @@ func agentWithMCP(ctx context.Context, client *deebus.Client, mcpClient *mcp.Cli
 		return
 	}
 
-	fmt.Printf("  Answer  : %s\n", answer)
-	fmt.Printf("  History : %d messages\n\n", len(history))
+	fmt.Printf("  Answer: %s\n", answer)
+	fmt.Printf("  History: %d messages\n\n", len(history))
 }
-
-// ── HTTP transport ────────────────────────────────────────────────────────────
 
 func httpDemo(ctx context.Context, client *deebus.Client) {
 	endpoint := os.Getenv("MCP_HTTP_ENDPOINT")
 	if endpoint == "" {
-		fmt.Println("── MCP HTTP (skipped — set MCP_HTTP_ENDPOINT to enable) ─────────────")
+		fmt.Println("MCP HTTP skipped; set MCP_HTTP_ENDPOINT to enable it.")
 		fmt.Println()
 		return
 	}
 
-	fmt.Println("── MCP HTTP (Streamable HTTP, spec 2025-03-26) ───────────────────────")
+	fmt.Println("MCP HTTP")
 	fmt.Printf("Endpoint: %s\n", endpoint)
 
 	mcpClient, err := mcp.NewHTTPClient(ctx, endpoint, 30*time.Second,
@@ -179,7 +177,7 @@ func httpDemo(ctx context.Context, client *deebus.Client) {
 	}
 	defer mcpClient.Close()
 
-	fmt.Printf("Server  : %s %s\n",
+	fmt.Printf("Server: %s %s\n",
 		mcpClient.ServerInfo().Name, mcpClient.ServerInfo().Version)
 
 	tools, err := mcpClient.Tools(ctx)
@@ -187,7 +185,7 @@ func httpDemo(ctx context.Context, client *deebus.Client) {
 		fmt.Printf("tools/list error: %v\n\n", err)
 		return
 	}
-	fmt.Printf("Tools   : %d available\n\n", len(tools))
+	fmt.Printf("Tools: %d available\n\n", len(tools))
 
 	// Run an agent backed by the remote MCP server.
 	answer, _, err := client.RunAgent(ctx,
@@ -207,13 +205,11 @@ func httpDemo(ctx context.Context, client *deebus.Client) {
 	fmt.Printf("Answer: %s\n\n", answer)
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return s[:n] + "..."
 }
 
 func requireEnv(key string) string {

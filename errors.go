@@ -6,7 +6,7 @@ import "github.com/ncobase/deebus/providers"
 // Re-exported from the providers package for convenient access.
 type ProviderError = providers.ProviderError
 
-// IsRetryable reports whether err is a retryable error — i.e. the same
+// IsRetryable reports whether err is a retryable error - i.e. the same
 // provider should be tried again (after a backoff).
 func IsRetryable(err error) bool { return providers.IsRetryable(err) }
 

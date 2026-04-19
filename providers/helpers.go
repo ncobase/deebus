@@ -2,8 +2,6 @@ package providers
 
 import "encoding/json"
 
-// ─── Message constructors ─────────────────────────────────────────────────────
-
 // TextMessage creates a single-text-block message.
 func TextMessage(role, text string) Message {
 	return Message{
@@ -62,9 +60,9 @@ func AssistantMessage(content string, toolCalls []ToolCall) Message {
 }
 
 // ToolResultMessage creates a tool result message for multi-turn tool calling.
-//   - toolCallID: the ID from the ToolCall that was executed
-//   - name:       the function name (required by Gemini for functionResponse)
-//   - result:     the tool's output, either plain text or JSON
+// - toolCallID: the ID from the ToolCall that was executed
+// - name:       the function name (required by Gemini for functionResponse)
+// - result:     the tool's output, either plain text or JSON
 func ToolResultMessage(toolCallID, name, result string) Message {
 	return Message{
 		Role:       "tool",
@@ -73,8 +71,6 @@ func ToolResultMessage(toolCallID, name, result string) Message {
 		Name:       name,
 	}
 }
-
-// ─── Content helpers ──────────────────────────────────────────────────────────
 
 // ExtractText returns the text from the first TextContent block, or "".
 func ExtractText(content []ContentBlock) string {
@@ -133,7 +129,7 @@ func BuildAnthropicSystem(messages []Message) any {
 	}
 
 	if !needsBlocks {
-		// Plain string — backward-compatible path.
+		// Plain string - backward-compatible path.
 		var sb string
 		for _, b := range sysBlocks {
 			if tc, ok := b.(TextContent); ok {
@@ -146,7 +142,7 @@ func BuildAnthropicSystem(messages []Message) any {
 		return sb
 	}
 
-	// Array of content blocks — required when cache_control is present.
+	// Array of content blocks - required when cache_control is present.
 	parts := make([]map[string]any, 0, len(sysBlocks))
 	for _, b := range sysBlocks {
 		switch tc := b.(type) {
@@ -173,8 +169,6 @@ func BuildAnthropicSystem(messages []Message) any {
 	}
 	return parts
 }
-
-// ─── Tool format converters ───────────────────────────────────────────────────
 
 // ConvertToolsToAnthropic converts the unified Tool slice to Anthropic's format.
 // Anthropic uses "input_schema" instead of "parameters" and does not wrap
@@ -212,7 +206,7 @@ func ConvertToolsToGemini(tools []Tool) []map[string]any {
 }
 
 // GeminiToolConfig converts a ToolChoice string to Gemini's toolConfig object.
-// "auto" → AUTO (default), "none" → NONE, "required" → ANY.
+// "auto" -> AUTO (default), "none" -> NONE, "required" -> ANY.
 func GeminiToolConfig(choice string) map[string]any {
 	mode := "AUTO"
 	switch choice {
@@ -241,8 +235,6 @@ func AnthropicToolChoice(choice string) map[string]any {
 	}
 }
 
-// ─── Provider format converters ───────────────────────────────────────────────
-
 // ConvertToOpenAIFormat converts messages to the OpenAI chat-completions format,
 // including tool result messages (role="tool") and assistant messages with tool_calls.
 func ConvertToOpenAIFormat(messages []Message) []map[string]any {
@@ -259,7 +251,7 @@ func ConvertToOpenAIFormat(messages []Message) []map[string]any {
 
 		case "assistant":
 			if len(msg.ToolCalls) > 0 {
-				// Assistant message with tool calls — content may be nil/empty.
+				// Assistant message with tool calls - content may be nil/empty.
 				m := map[string]any{
 					"role":       "assistant",
 					"tool_calls": msg.ToolCalls,

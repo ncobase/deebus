@@ -10,7 +10,7 @@ import (
 
 // RateLimitMiddleware implements a continuous token bucket rate limiter.
 // Tokens refill proportionally to elapsed time, not in discrete bursts.
-// If requestsPerSecond is ≤ 0, the middleware is a no-op.
+// If requestsPerSecond is <= 0, the middleware is a no-op.
 type RateLimitMiddleware struct {
 	provider  providers.Provider
 	capacity  float64
@@ -59,6 +59,61 @@ func (r *RateLimitMiddleware) Health(ctx context.Context) error {
 	return r.provider.Health(ctx)
 }
 
+func (r *RateLimitMiddleware) CreateCache(ctx context.Context, req *providers.CreateCacheRequest) (*providers.Cache, error) {
+	cp, err := cacheProvider(r.provider)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.acquire(ctx); err != nil {
+		return nil, err
+	}
+	return cp.CreateCache(ctx, req)
+}
+
+func (r *RateLimitMiddleware) GetCache(ctx context.Context, name string) (*providers.Cache, error) {
+	cp, err := cacheProvider(r.provider)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.acquire(ctx); err != nil {
+		return nil, err
+	}
+	return cp.GetCache(ctx, name)
+}
+
+func (r *RateLimitMiddleware) ListCaches(ctx context.Context, req *providers.ListCachesRequest) (*providers.ListCachesResponse, error) {
+	cp, err := cacheProvider(r.provider)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.acquire(ctx); err != nil {
+		return nil, err
+	}
+	return cp.ListCaches(ctx, req)
+}
+
+func (r *RateLimitMiddleware) UpdateCache(ctx context.Context, req *providers.UpdateCacheRequest) (*providers.Cache, error) {
+	cp, err := cacheProvider(r.provider)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.acquire(ctx); err != nil {
+		return nil, err
+	}
+	return cp.UpdateCache(ctx, req)
+}
+
+func (r *RateLimitMiddleware) DeleteCache(ctx context.Context, name string) error {
+	cp, err := cacheProvider(r.provider)
+	if err != nil {
+		return err
+	}
+	if err := r.acquire(ctx); err != nil {
+		return err
+	}
+	return cp.DeleteCache(ctx, name)
+}
+
 // acquire blocks until a token is available or ctx is cancelled.
 func (r *RateLimitMiddleware) acquire(ctx context.Context) error {
 	if r.capacity <= 0 {
@@ -100,5 +155,5 @@ func (r *RateLimitMiddleware) tryAcquire() time.Duration {
 	}
 
 	// Return how long until the next token is available
-	return time.Duration((1.0-r.tokens) / r.refillRPS * float64(time.Second))
+	return time.Duration((1.0 - r.tokens) / r.refillRPS * float64(time.Second))
 }

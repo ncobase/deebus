@@ -19,9 +19,25 @@ type testCreds struct {
 	GeminiBaseURL    string
 }
 
+// integrationEnv enables live integration tests against real provider APIs.
+const integrationEnv = "DEEBUS_RUN_INTEGRATION"
+
 // credentialsFile is the name of the local credentials file used for
 // integration tests. The file uses KEY=VALUE lines (comments with #).
 const credentialsFile = "token.test"
+
+// requireIntegrationEnabled skips live integration tests unless explicitly
+// enabled by the caller.
+func requireIntegrationEnabled(t *testing.T) {
+	t.Helper()
+
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(integrationEnv))) {
+	case "1", "true", "yes":
+		return
+	default:
+		t.Skipf("set %s=1 to run live integration tests", integrationEnv)
+	}
+}
 
 // loadTestCreds reads the credentials file from the module root.
 // If the file does not exist the calling test is skipped (not failed).
@@ -29,7 +45,7 @@ func loadTestCreds(t *testing.T) testCreds {
 	t.Helper()
 	f, err := os.Open(credentialsFile)
 	if err != nil {
-		t.Skipf("credentials file %q not found — skipping integration tests", credentialsFile)
+		t.Skipf("credentials file %q not found - skipping integration tests", credentialsFile)
 	}
 	defer f.Close()
 
@@ -48,22 +64,22 @@ func loadTestCreds(t *testing.T) testCreds {
 		case "ANTHROPIC_API_KEY":
 			c.AnthropicAPIKey = strings.TrimSpace(v)
 		case "ANTHROPIC_BASE_URL":
-			// Strip version suffix — the provider appends the path segment itself.
+			// Strip version suffix - the provider appends the path segment itself.
 			c.AnthropicBaseURL = strings.TrimSuffix(strings.TrimSpace(v), "/v1")
 		case "OPENAI_API_KEY":
 			c.OpenAIAPIKey = strings.TrimSpace(v)
 		case "OPENAI_BASE_URL":
-			// Strip version suffix — the provider appends the path segment itself.
+			// Strip version suffix - the provider appends the path segment itself.
 			c.OpenAIBaseURL = strings.TrimSuffix(strings.TrimSpace(v), "/v1")
 		case "GEMINI_API_KEY":
 			c.GeminiAPIKey = strings.TrimSpace(v)
 		case "GEMINI_BASE_URL":
-			// Strip version suffix — the provider appends the path segment itself.
+			// Strip version suffix - the provider appends the path segment itself.
 			c.GeminiBaseURL = strings.TrimSuffix(strings.TrimSpace(v), "/v1beta")
 		}
 	}
 	if err := sc.Err(); err != nil {
-		t.Skipf("credentials file scan error: %v — skipping integration tests", err)
+		t.Skipf("credentials file scan error: %v - skipping integration tests", err)
 	}
 	return c
 }
@@ -192,9 +208,9 @@ Secondary: TypeScript/React for frontend-adjacent documentation, Python for data
 Your responses are always grounded in the specific context provided. You ask clarifying questions before writing long documents to ensure the output meets the reader's needs.`
 }
 
-// ─── Anthropic ────────────────────────────────────────────────────────────────
-
 func TestIntegrationAnthropic(t *testing.T) {
+	requireIntegrationEnabled(t)
+
 	creds := loadTestCreds(t)
 	if creds.AnthropicAPIKey == "" || creds.AnthropicBaseURL == "" {
 		t.Skip("Anthropic credentials not configured")
@@ -288,8 +304,8 @@ func TestIntegrationAnthropic(t *testing.T) {
 						Role: "system",
 						Content: []ContentBlock{
 							TextContent{
-								Type: "text",
-								Text: systemPrompt,
+								Type:         "text",
+								Text:         systemPrompt,
 								CacheControl: &CacheControl{Type: "ephemeral"},
 							},
 						},
@@ -323,7 +339,7 @@ func TestIntegrationAnthropic(t *testing.T) {
 			r2.CacheUsage.CreatedTokens, r2.CacheUsage.ReadTokens)
 
 		if r2.CacheUsage.ReadTokens == 0 {
-			t.Logf("WARNING: r2 cache_read=0 — cache may not have established on the very first write; this is not a failure")
+			t.Log("second request did not report cached tokens")
 		}
 
 		total, _, _, _, _ := client.Stats.Get()
@@ -334,6 +350,49 @@ func TestIntegrationAnthropic(t *testing.T) {
 
 		if cacheCreated+cacheRead == 0 {
 			t.Error("expected Stats.CacheCreatedTokens+Stats.CacheReadTokens > 0 after two caching requests")
+		}
+	})
+
+	t.Run("automatic_cache_write_then_read", func(t *testing.T) {
+		systemPrompt := buildLongSystemPrompt()
+
+		makeReq := func() *Request {
+			return &Request{
+				Messages: []Message{
+					TextMessage("system", systemPrompt),
+					TextMessage("user", "Summarise your role in one sentence."),
+				},
+				MaxTokens: 64,
+				Cache: &CacheOptions{
+					Control: &CacheControl{Type: "ephemeral"},
+				},
+			}
+		}
+
+		reqCtx1, cancel1 := context.WithTimeout(ctx, 90*time.Second)
+		defer cancel1()
+
+		r1, err := client.Complete(reqCtx1, makeReq())
+		if err != nil {
+			t.Fatalf("automatic cache request 1: %v", err)
+		}
+		t.Logf("r1: input=%d output=%d cache_created=%d cache_read=%d",
+			r1.InputTokens, r1.OutputTokens,
+			r1.CacheUsage.CreatedTokens, r1.CacheUsage.ReadTokens)
+
+		reqCtx2, cancel2 := context.WithTimeout(ctx, 90*time.Second)
+		defer cancel2()
+
+		r2, err := client.Complete(reqCtx2, makeReq())
+		if err != nil {
+			t.Fatalf("automatic cache request 2: %v", err)
+		}
+		t.Logf("r2: input=%d output=%d cache_created=%d cache_read=%d",
+			r2.InputTokens, r2.OutputTokens,
+			r2.CacheUsage.CreatedTokens, r2.CacheUsage.ReadTokens)
+
+		if r2.CacheUsage.ReadTokens == 0 {
+			t.Log("second automatic-cache request did not report cached tokens")
 		}
 	})
 
@@ -371,9 +430,9 @@ func TestIntegrationAnthropic(t *testing.T) {
 	})
 }
 
-// ─── OpenAI ───────────────────────────────────────────────────────────────────
-
 func TestIntegrationOpenAI(t *testing.T) {
+	requireIntegrationEnabled(t)
+
 	creds := loadTestCreds(t)
 	if creds.OpenAIAPIKey == "" || creds.OpenAIBaseURL == "" {
 		t.Skip("OpenAI credentials not configured")
@@ -480,7 +539,7 @@ func TestIntegrationOpenAI(t *testing.T) {
 
 	t.Run("cached_tokens", func(t *testing.T) {
 		// OpenAI caches automatically for prompts >=1024 tokens.
-		// Short prompts will not be cached — just log the result.
+		// Short prompts will not be cached - just log the result.
 		makeReq := func() *Request {
 			return &Request{
 				Messages:  []Message{TextMessage("user", "What is 2+2?")},
@@ -504,8 +563,50 @@ func TestIntegrationOpenAI(t *testing.T) {
 		if err != nil {
 			t.Fatalf("cached_tokens request 2: %v", err)
 		}
-		t.Logf("r2: input=%d output=%d cache_read=%d (may be 0 for short prompts — OpenAI auto-caches >=1024 tokens)",
+		t.Logf("r2: input=%d output=%d cache_read=%d (may be 0 for short prompts - OpenAI auto-caches >=1024 tokens)",
 			r2.InputTokens, r2.OutputTokens, r2.CacheUsage.ReadTokens)
+	})
+
+	t.Run("prompt_cache_key_and_retention", func(t *testing.T) {
+		longPrompt := buildLongSystemPrompt()
+
+		makeReq := func() *Request {
+			return &Request{
+				Messages: []Message{
+					TextMessage("system", longPrompt),
+					TextMessage("user", "Summarise your role in one sentence."),
+				},
+				MaxTokens: 64,
+				Cache: &CacheOptions{
+					Key:       "integration-test-openai-cache",
+					Retention: "in_memory",
+				},
+			}
+		}
+
+		reqCtx1, cancel1 := context.WithTimeout(ctx, 90*time.Second)
+		defer cancel1()
+
+		r1, err := client.Complete(reqCtx1, makeReq())
+		if err != nil {
+			t.Fatalf("prompt_cache_key request 1: %v", err)
+		}
+		t.Logf("r1: input=%d output=%d cache_read=%d",
+			r1.InputTokens, r1.OutputTokens, r1.CacheUsage.ReadTokens)
+
+		reqCtx2, cancel2 := context.WithTimeout(ctx, 90*time.Second)
+		defer cancel2()
+
+		r2, err := client.Complete(reqCtx2, makeReq())
+		if err != nil {
+			t.Fatalf("prompt_cache_key request 2: %v", err)
+		}
+		t.Logf("r2: input=%d output=%d cache_read=%d",
+			r2.InputTokens, r2.OutputTokens, r2.CacheUsage.ReadTokens)
+
+		if r2.CacheUsage.ReadTokens == 0 {
+			t.Log("second keyed OpenAI request did not report cached tokens")
+		}
 	})
 
 	t.Run("stats", func(t *testing.T) {
@@ -526,9 +627,9 @@ func TestIntegrationOpenAI(t *testing.T) {
 	})
 }
 
-// ─── Gemini ───────────────────────────────────────────────────────────────────
-
 func TestIntegrationGemini(t *testing.T) {
+	requireIntegrationEnabled(t)
+
 	creds := loadTestCreds(t)
 	if creds.GeminiAPIKey == "" || creds.GeminiBaseURL == "" {
 		t.Skip("Gemini credentials not configured")
@@ -598,6 +699,92 @@ func TestIntegrationGemini(t *testing.T) {
 			doneChunk.ReasoningTokens, doneChunk.CacheUsage.ReadTokens)
 	})
 
+	t.Run("explicit_cache_lifecycle", func(t *testing.T) {
+		largeContext := strings.Repeat(buildLongSystemPrompt(), 4)
+
+		reqCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+		defer cancel()
+
+		cache, err := client.CreateCache(reqCtx, "gemini", &CreateCacheRequest{
+			Model:       "gemini-3.1-pro",
+			DisplayName: "integration-test-cache",
+			Messages: []Message{
+				TextMessage("system", "You are a concise assistant."),
+				TextMessage("user", largeContext),
+			},
+			TTL: 10 * time.Minute,
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "404") ||
+				strings.Contains(err.Error(), "not found") ||
+				strings.Contains(err.Error(), "UNIMPLEMENTED") {
+				t.Skipf("Gemini explicit cache API unavailable: %v", err)
+			}
+			t.Fatalf("CreateCache: %v", err)
+		}
+		t.Cleanup(func() {
+			delCtx, delCancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer delCancel()
+			if err := client.DeleteCache(delCtx, "gemini", cache.Name); err != nil {
+				t.Logf("cleanup delete cache %q: %v", cache.Name, err)
+			}
+		})
+
+		if cache.Name == "" {
+			t.Fatal("CreateCache returned an empty cache name")
+		}
+
+		got, err := client.GetCache(reqCtx, "gemini", cache.Name)
+		if err != nil {
+			t.Fatalf("GetCache: %v", err)
+		}
+		if got.Name != cache.Name {
+			t.Fatalf("GetCache.Name = %q, want %q", got.Name, cache.Name)
+		}
+
+		updated, err := client.UpdateCache(reqCtx, "gemini", &UpdateCacheRequest{
+			Name: cache.Name,
+			TTL:  15 * time.Minute,
+		})
+		if err != nil {
+			t.Fatalf("UpdateCache: %v", err)
+		}
+		if updated.Name != cache.Name {
+			t.Fatalf("UpdateCache.Name = %q, want %q", updated.Name, cache.Name)
+		}
+
+		list, err := client.ListCaches(reqCtx, "gemini", &ListCachesRequest{PageSize: 10})
+		if err != nil {
+			t.Fatalf("ListCaches: %v", err)
+		}
+		found := false
+		for _, item := range list.Items {
+			if item.Name == cache.Name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Logf("created cache %q was not found in the first list page", cache.Name)
+		}
+
+		resp, err := client.Complete(reqCtx, &Request{
+			Messages:  []Message{TextMessage("user", "Summarise the cached document in one sentence.")},
+			MaxTokens: 64,
+			Cache: &CacheOptions{
+				CachedContent: cache.Name,
+			},
+		})
+		if err != nil {
+			t.Fatalf("Complete with cached content: %v", err)
+		}
+		if resp.CacheUsage.ReadTokens == 0 {
+			t.Log("Gemini explicit cache use did not report cached tokens")
+		}
+		t.Logf("explicit cache use: input=%d output=%d cache_read=%d",
+			resp.InputTokens, resp.OutputTokens, resp.CacheUsage.ReadTokens)
+	})
+
 	t.Run("stats", func(t *testing.T) {
 		total, input, output, success, failed := client.Stats.Get()
 		cacheRead := client.Stats.CacheReadTokens.Load()
@@ -616,9 +803,9 @@ func TestIntegrationGemini(t *testing.T) {
 	})
 }
 
-// ─── Multi-provider ───────────────────────────────────────────────────────────
-
 func TestIntegrationMultiProvider(t *testing.T) {
+	requireIntegrationEnabled(t)
+
 	creds := loadTestCreds(t)
 	if creds.AnthropicAPIKey == "" || creds.AnthropicBaseURL == "" {
 		t.Skip("Anthropic credentials not configured")

@@ -1,11 +1,11 @@
-// Example 02: Tool Calling — single-turn and multi-turn (manual history).
+// Example 02: Tool Calling - single-turn and multi-turn (manual history).
 //
 // Shows how to:
-//   - Define tool schemas in the unified format.
-//   - Detect and dispatch tool calls from a single-turn response.
-//   - Build a multi-turn conversation manually using AssistantMessage and
-//     ToolResultMessage so the model can see results and continue.
-//   - Handle parallel tool calls (multiple tools in one response).
+// - Define tool schemas in the unified format.
+// - Detect and dispatch tool calls from a single-turn response.
+// - Build a multi-turn conversation manually using AssistantMessage and
+// ToolResultMessage so the model can see results and continue.
+// - Handle parallel tool calls (multiple tools in one response).
 //
 // Run:
 //
@@ -45,8 +45,6 @@ func main() {
 	multiTurn(ctx, client)
 	parallelTools(ctx, client)
 }
-
-// ── Tool definitions ──────────────────────────────────────────────────────────
 
 var weatherTool = deebus.Tool{
 	Type: "function",
@@ -88,10 +86,9 @@ var calendarTool = deebus.Tool{
 	},
 }
 
-// ── Single-turn: detect tool calls ───────────────────────────────────────────
-
+// Single-turn: detect tool calls
 func singleTurn(ctx context.Context, client *deebus.Client) {
-	fmt.Println("── Single-turn tool calling ─────────────────────────────────────────")
+	fmt.Println("Single-turn tool calling")
 
 	resp, err := client.Complete(ctx, &deebus.Request{
 		Messages:   []deebus.Message{deebus.TextMessage("user", "What is the weather in Tokyo?")},
@@ -109,15 +106,14 @@ func singleTurn(ctx context.Context, client *deebus.Client) {
 
 	for _, tc := range resp.ToolCalls {
 		result := executeWeather(tc.Function.Arguments)
-		fmt.Printf("  tool=%-12s args=%s\n  result=%s\n\n",
+		fmt.Printf("  tool=%s args=%s\n  result=%s\n\n",
 			tc.Function.Name, tc.Function.Arguments, result)
 	}
 }
 
-// ── Multi-turn: build conversation history manually ───────────────────────────
-
+// Multi-turn: build conversation history manually
 func multiTurn(ctx context.Context, client *deebus.Client) {
-	fmt.Println("── Multi-turn tool calling ──────────────────────────────────────────")
+	fmt.Println("Multi-turn tool calling")
 
 	tools := []deebus.Tool{weatherTool}
 	messages := []deebus.Message{
@@ -136,7 +132,7 @@ func multiTurn(ctx context.Context, client *deebus.Client) {
 		}
 
 		if len(resp.ToolCalls) == 0 {
-			// Model produced a final answer — conversation is complete.
+			// Model produced a final answer - conversation is complete.
 			fmt.Println("Final answer:", resp.Content)
 			fmt.Println()
 			return
@@ -148,7 +144,7 @@ func multiTurn(ctx context.Context, client *deebus.Client) {
 		// Execute each tool and append its result.
 		for _, tc := range resp.ToolCalls {
 			result := executeWeather(tc.Function.Arguments)
-			fmt.Printf("  → %s(%s) = %s\n", tc.Function.Name, tc.Function.Arguments, result)
+			fmt.Printf("  call %s(%s) result=%s\n", tc.Function.Name, tc.Function.Arguments, result)
 
 			// ToolResultMessage links the result back to the tool call by ID.
 			messages = append(messages, deebus.ToolResultMessage(tc.ID, tc.Function.Name, result))
@@ -158,10 +154,9 @@ func multiTurn(ctx context.Context, client *deebus.Client) {
 	fmt.Println("(max turns reached)")
 }
 
-// ── Parallel tool calls (multiple tools in one response) ──────────────────────
-
+// Parallel tool calls (multiple tools in one response)
 func parallelTools(ctx context.Context, client *deebus.Client) {
-	fmt.Println("── Parallel tool calls ──────────────────────────────────────────────")
+	fmt.Println("Parallel tool calls")
 
 	messages := []deebus.Message{
 		deebus.TextMessage("user",
@@ -194,7 +189,7 @@ func parallelTools(ctx context.Context, client *deebus.Client) {
 		case "get_calendar":
 			result = `{"date":"2026-03-19","events":["10:00 Team standup","14:00 Architecture review"]}`
 		}
-		fmt.Printf("  %s → %s\n", tc.Function.Name, result)
+		fmt.Printf("  %s result=%s\n", tc.Function.Name, result)
 		messages = append(messages, deebus.ToolResultMessage(tc.ID, tc.Function.Name, result))
 	}
 
@@ -206,8 +201,7 @@ func parallelTools(ctx context.Context, client *deebus.Client) {
 	fmt.Println()
 }
 
-// ── Stub tool implementations ─────────────────────────────────────────────────
-
+// Stub tool implementations
 func executeWeather(argsJSON string) string {
 	var args struct {
 		City string `json:"city"`
@@ -220,7 +214,7 @@ func executeWeather(argsJSON string) string {
 	if unit == "" {
 		unit = "celsius"
 	}
-	// Stub response — replace with a real weather API call.
+	// Stub response - replace with a real weather API call.
 	return fmt.Sprintf(`{"city":%q,"temperature":22,"unit":%q,"condition":"partly cloudy"}`,
 		args.City, unit)
 }

@@ -207,7 +207,7 @@ func (p *OllamaProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 				Done            bool   `json:"done"`
 				DoneReason      string `json:"done_reason"`
 				PromptEvalCount int    `json:"prompt_eval_count"`
-				EvalCount  int    `json:"eval_count"`
+				EvalCount       int    `json:"eval_count"`
 			}
 
 			if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {

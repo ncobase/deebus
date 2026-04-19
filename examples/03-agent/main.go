@@ -1,11 +1,11 @@
-// Example 03: Agent Loop — RunAgent, RunAgentStream, hooks, history trimming.
+// Example 03: Agent Loop - RunAgent, RunAgentStream, hooks, history trimming.
 //
 // Shows how to:
-//   - Run a non-streaming agent loop with parallel tool execution.
-//   - Observe every action via AgentConfig.Hook for structured logging.
-//   - Run a streaming agent and receive tokens in real time between tool turns.
-//   - Trim conversation history to prevent context overflow (MaxHistoryMessages).
-//   - Collect the full conversation history after the loop ends.
+// - Run a non-streaming agent loop with parallel tool execution.
+// - Observe every action via AgentConfig.Hook for structured logging.
+// - Run a streaming agent and receive tokens in real time between tool turns.
+// - Trim conversation history to prevent context overflow (MaxHistoryMessages).
+// - Collect the full conversation history after the loop ends.
 //
 // Run:
 //
@@ -48,8 +48,6 @@ func main() {
 	longRunningAgent(ctx, client)
 }
 
-// ── Tool definitions ──────────────────────────────────────────────────────────
-
 var tools = []deebus.Tool{
 	{
 		Type: "function",
@@ -85,22 +83,20 @@ func toolFn(_ context.Context, name, argsJSON string) (string, error) {
 	switch name {
 	case "search":
 		query, _ := args["query"].(string)
-		// Stub — replace with a real search API call.
+		// Stub - replace with a real search API call.
 		return fmt.Sprintf(`{"results":["Result A for %q","Result B for %q"]}`, query, query), nil
 
 	case "calculate":
 		expr, _ := args["expression"].(string)
-		// Stub — replace with a real expression evaluator.
+		// Stub - replace with a real expression evaluator.
 		return fmt.Sprintf(`{"expression":%q,"result":42}`, expr), nil
 	}
 
 	return "", fmt.Errorf("unknown tool: %s", name)
 }
 
-// ── Blocking agent ────────────────────────────────────────────────────────────
-
 func blockingAgent(ctx context.Context, client *deebus.Client) {
-	fmt.Println("── RunAgent (blocking, parallel tools, hook) ────────────────────────")
+	fmt.Println("RunAgent")
 
 	answer, history, err := client.RunAgent(ctx,
 		&deebus.Request{
@@ -121,14 +117,12 @@ func blockingAgent(ctx context.Context, client *deebus.Client) {
 		log.Fatalf("agent: %v", err)
 	}
 
-	fmt.Printf("\nAnswer  : %s\n", answer)
-	fmt.Printf("History : %d messages\n\n", len(history))
+	fmt.Printf("\nAnswer: %s\n", answer)
+	fmt.Printf("History: %d messages\n\n", len(history))
 }
 
-// ── Streaming agent ───────────────────────────────────────────────────────────
-
 func streamingAgent(ctx context.Context, client *deebus.Client) {
-	fmt.Println("── RunAgentStream (real-time tokens between tool turns) ──────────────")
+	fmt.Println("RunAgentStream")
 
 	histCh := make(chan []deebus.Message, 1)
 
@@ -150,7 +144,7 @@ func streamingAgent(ctx context.Context, client *deebus.Client) {
 		log.Fatalf("stream agent: %v", err)
 	}
 
-	fmt.Print("Stream  : ")
+	fmt.Print("Stream: ")
 	for chunk := range stream {
 		if chunk.Error != nil {
 			fmt.Printf("\n[error] %v\n", chunk.Error)
@@ -160,19 +154,17 @@ func streamingAgent(ctx context.Context, client *deebus.Client) {
 			fmt.Print(chunk.Content)
 		}
 		if chunk.Done && len(chunk.ToolCalls) > 0 {
-			// Tool-call turn ending — a blank line separates turns visually.
+			// Tool-call turn ending - a blank line separates turns visually.
 			fmt.Print(" [tool turn] ")
 		}
 	}
 
 	history := <-histCh
-	fmt.Printf("\nHistory : %d messages\n\n", len(history))
+	fmt.Printf("\nHistory: %d messages\n\n", len(history))
 }
 
-// ── Long-running agent with history trimming ──────────────────────────────────
-
 func longRunningAgent(ctx context.Context, client *deebus.Client) {
-	fmt.Println("── Long-running agent (MaxHistoryMessages = 10) ─────────────────────")
+	fmt.Println("Long-running agent")
 
 	// Simulate a conversation that would exceed the context window.
 	// MaxHistoryMessages trims oldest turns while preserving the system message.
@@ -195,40 +187,36 @@ func longRunningAgent(ctx context.Context, client *deebus.Client) {
 		log.Fatalf("long agent: %v", err)
 	}
 
-	fmt.Printf("\nAnswer  : %s\n", answer)
-	fmt.Printf("History : %d messages (trimmed to max 10)\n\n", len(history))
+	fmt.Printf("\nAnswer: %s\n", answer)
+	fmt.Printf("History: %d messages (trimmed to max 10)\n\n", len(history))
 }
-
-// ── Hook ──────────────────────────────────────────────────────────────────────
 
 func logHook(ev deebus.AgentEvent) {
 	switch ev.Type {
 	case deebus.EventLLMRequest:
-		fmt.Printf("  [iter %d] → LLM request\n", ev.Iteration)
+		fmt.Printf("  [iter %d] llm_request\n", ev.Iteration)
 	case deebus.EventLLMResponse:
-		fmt.Printf("  [iter %d] ← LLM response  tokens=%d  elapsed=%s\n",
+		fmt.Printf("  [iter %d] llm_response tokens=%d elapsed=%s\n",
 			ev.Iteration, ev.TokensUsed, round(ev.Duration))
 	case deebus.EventToolCall:
-		fmt.Printf("  [iter %d] ↓ tool_call     %s(%s)\n",
+		fmt.Printf("  [iter %d] tool_call %s(%s)\n",
 			ev.Iteration, ev.ToolName, truncate(ev.Input, 60))
 	case deebus.EventToolResult:
-		fmt.Printf("  [iter %d] ↑ tool_result   %s → %s  elapsed=%s\n",
+		fmt.Printf("  [iter %d] tool_result %s result=%s elapsed=%s\n",
 			ev.Iteration, ev.ToolName, truncate(ev.Output, 40), round(ev.Duration))
 	case deebus.EventDone:
-		fmt.Printf("  [iter %d] ✓ done\n", ev.Iteration)
+		fmt.Printf("  [iter %d] done\n", ev.Iteration)
 	case deebus.EventError:
-		fmt.Printf("  [iter %d] ✗ error: %v\n", ev.Iteration, ev.Err)
+		fmt.Printf("  [iter %d] error: %v\n", ev.Iteration, ev.Err)
 	}
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 func truncate(s string, n int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return s[:n] + "..."
 }
 
 func round(d time.Duration) string {

@@ -18,8 +18,8 @@ import (
 //
 // Each JSON-RPC call is a separate HTTP POST to the server endpoint. The server
 // may respond with:
-//   - application/json         — direct JSON response (common for simple calls)
-//   - text/event-stream        — SSE stream containing one or more responses
+// - application/json         - direct JSON response (common for simple calls)
+// - text/event-stream        - SSE stream containing one or more responses
 //
 // Session management: after initialization the server may return a
 // Mcp-Session-Id header. The client includes it on all subsequent requests.
@@ -28,9 +28,9 @@ type httpTransport struct {
 	client    *http.Client
 	sessionID atomic.Value // stores string
 
-	nextID    atomic.Int64
-	notifyMu  sync.Mutex
-	onNotify  func(rpcMessage)
+	nextID   atomic.Int64
+	notifyMu sync.Mutex
+	onNotify func(rpcMessage)
 }
 
 func newHTTPTransport(endpoint string, timeout time.Duration) *httpTransport {
@@ -203,7 +203,7 @@ func (t *httpTransport) setNotificationHandler(h func(rpcMessage)) {
 	t.notifyMu.Unlock()
 }
 
-// close sends a DELETE to signal session termination (spec §6.4).
+// close sends a DELETE to signal session termination (spec section 6.4).
 func (t *httpTransport) close() error {
 	sid, _ := t.sessionID.Load().(string)
 	if sid == "" {
