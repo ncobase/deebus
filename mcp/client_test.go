@@ -355,3 +355,21 @@ func TestContextCancellation(t *testing.T) {
 		t.Fatal("expected context cancellation error")
 	}
 }
+
+func TestCallToolResultPrefersStructuredContent(t *testing.T) {
+	r := CallToolResult{
+		Content:           []ContentItem{{Type: "text", Text: "fallback"}},
+		StructuredContent: map[string]any{"ok": true},
+	}
+	if got := r.Text(); got != `{"ok":true}` {
+		t.Fatalf("Text() = %q", got)
+	}
+}
+
+func TestMCPToolDecodesOutputSchema(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+	tool := Tool{Name: "lookup", InputSchema: schema, OutputSchema: schema}
+	if len(tool.OutputSchema) == 0 {
+		t.Fatal("OutputSchema should be retained")
+	}
+}

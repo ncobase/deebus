@@ -68,8 +68,30 @@ func (p *OllamaProvider) Complete(ctx context.Context, req *Request) (*Response,
 		"messages": convertToOllamaFormat(req.Messages),
 		"stream":   false,
 	}
-	if req.Options != nil {
-		body["options"] = req.Options
+	options := map[string]any{}
+	for k, v := range req.Options {
+		options[k] = v
+	}
+	if req.Temperature > 0 {
+		options["temperature"] = req.Temperature
+	}
+	if req.TopP > 0 {
+		options["top_p"] = req.TopP
+	}
+	if req.Seed != nil {
+		options["seed"] = *req.Seed
+	}
+	if len(req.Stop) > 0 {
+		options["stop"] = req.Stop
+	}
+	if limit := outputTokenLimit(req); limit > 0 {
+		options["num_predict"] = limit
+	}
+	if len(options) > 0 {
+		body["options"] = options
+	}
+	if format := ollamaFormat(req.ResponseFormat); format != nil {
+		body["format"] = format
 	}
 	if len(req.Tools) > 0 {
 		body["tools"] = req.Tools // Ollama uses OpenAI-compatible tool format
@@ -156,8 +178,30 @@ func (p *OllamaProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		"messages": convertToOllamaFormat(req.Messages),
 		"stream":   true,
 	}
-	if req.Options != nil {
-		body["options"] = req.Options
+	options := map[string]any{}
+	for k, v := range req.Options {
+		options[k] = v
+	}
+	if req.Temperature > 0 {
+		options["temperature"] = req.Temperature
+	}
+	if req.TopP > 0 {
+		options["top_p"] = req.TopP
+	}
+	if req.Seed != nil {
+		options["seed"] = *req.Seed
+	}
+	if len(req.Stop) > 0 {
+		options["stop"] = req.Stop
+	}
+	if limit := outputTokenLimit(req); limit > 0 {
+		options["num_predict"] = limit
+	}
+	if len(options) > 0 {
+		body["options"] = options
+	}
+	if format := ollamaFormat(req.ResponseFormat); format != nil {
+		body["format"] = format
 	}
 	if len(req.Tools) > 0 {
 		body["tools"] = req.Tools

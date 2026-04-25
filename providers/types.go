@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -29,6 +30,7 @@ type Config struct {
 	APIKey             string
 	BearerToken        string
 	BaseURL            string
+	APIMode            string
 	Timeout            time.Duration
 	Headers            map[string]string
 	Organization       string
@@ -171,6 +173,37 @@ type FunctionSchema struct {
 	Description string         `json:"description,omitempty"`
 	Parameters  map[string]any `json:"parameters"`
 	Strict      bool           `json:"strict,omitempty"` // OpenAI structured outputs
+
+	// EagerInputStreaming enables Anthropic fine-grained tool parameter streaming.
+	EagerInputStreaming bool `json:"eager_input_streaming,omitempty"`
+}
+
+// ResponseFormat requests a structured model response when a provider supports it.
+type ResponseFormat struct {
+	// Type supports "text", "json_object", and "json_schema".
+	Type string `json:"type,omitempty"`
+
+	// Name and Description are used by schema-capable providers.
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+
+	// Schema is a JSON Schema object used when Type == "json_schema".
+	Schema map[string]any `json:"schema,omitempty"`
+
+	// Strict asks providers that support structured outputs to enforce Schema.
+	Strict bool `json:"strict,omitempty"`
+}
+
+// ReasoningConfig controls model thinking/reasoning features where supported.
+type ReasoningConfig struct {
+	// Effort is provider-defined. Common values: none, minimal, low, medium, high, xhigh.
+	Effort string `json:"effort,omitempty"`
+
+	// BudgetTokens caps reasoning/thinking tokens where supported.
+	BudgetTokens int `json:"budget_tokens,omitempty"`
+
+	// IncludeThoughts requests provider-visible thought summaries, not raw private chain-of-thought.
+	IncludeThoughts bool `json:"include_thoughts,omitempty"`
 }
 
 // ToolCall is a model's request to invoke a function.
@@ -186,14 +219,26 @@ type ToolCall struct {
 
 // Request is the unified completion/streaming request.
 type Request struct {
-	Messages    []Message
-	Model       string
-	MaxTokens   int
-	Temperature float64
-	Stream      bool
-	Tools       []Tool
-	ToolChoice  string         // "auto", "none", "required", or specific function name
-	Options     map[string]any // provider-specific extras (e.g. Ollama parameters)
+	Messages  []Message
+	Model     string
+	MaxTokens int
+	// MaxOutputTokens is the preferred field for modern APIs. MaxTokens remains
+	// for backward compatibility and is used when MaxOutputTokens is zero.
+	MaxOutputTokens int
+	Temperature     float64
+	TopP            float64
+	Stop            []string
+	Seed            *int
+	Stream          bool
+	Tools           []Tool
+	ToolChoice      string         // "auto", "none", "required", or specific function name
+	Options         map[string]any // provider-specific extras (e.g. Ollama parameters)
+	Metadata        map[string]string
+	Store           *bool
+
+	ResponseFormat    *ResponseFormat
+	Reasoning         *ReasoningConfig
+	ParallelToolCalls *bool
 
 	// Cache enables provider-native request-time caching controls such as
 	// Anthropic top-level cache_control, OpenAI prompt cache hints, and
@@ -209,6 +254,7 @@ type Request struct {
 // Response is the unified non-streaming response.
 type Response struct {
 	Content         string
+	Reasoning       string
 	Model           string
 	Provider        string
 	InputTokens     int // total input tokens (including cache-read and cache-write tokens)
@@ -218,12 +264,14 @@ type Response struct {
 	FinishReason    string
 	ToolCalls       []ToolCall
 	CacheUsage      CacheUsage // non-zero when the provider reports cache activity
+	Raw             json.RawMessage
 	CreatedAt       time.Time
 }
 
 // StreamChunk is one piece of a streaming response.
 type StreamChunk struct {
 	Content         string
+	Reasoning       string
 	ToolCalls       []ToolCall // populated in the final Done chunk when tools were called
 	Done            bool
 	FinishReason    string
@@ -232,6 +280,7 @@ type StreamChunk struct {
 	TokensUsed      int        // InputTokens + OutputTokens
 	ReasoningTokens int        // subset of OutputTokens used for internal reasoning
 	CacheUsage      CacheUsage // populated in the final Done chunk when caching is active
+	Raw             json.RawMessage
 	Error           error
 }
 

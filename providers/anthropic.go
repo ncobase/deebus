@@ -41,8 +41,8 @@ func (p *AnthropicProvider) Name() string { return "anthropic" }
 
 func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
 	maxTokens := defaultMaxTokens
-	if req.MaxTokens > 0 {
-		maxTokens = req.MaxTokens
+	if limit := outputTokenLimit(req); limit > 0 {
+		maxTokens = limit
 	}
 
 	_, msgs := ExtractSystemMessage(req.Messages)
@@ -60,6 +60,15 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
+	}
+	if req.TopP > 0 {
+		body["top_p"] = req.TopP
+	}
+	if len(req.Stop) > 0 {
+		body["stop_sequences"] = req.Stop
+	}
+	if thinking := anthropicThinking(req.Reasoning); thinking != nil {
+		body["thinking"] = thinking
 	}
 	if len(req.Tools) > 0 {
 		body["tools"] = ConvertToolsToAnthropic(req.Tools)
@@ -132,7 +141,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 		case "text":
 			content = block.Text
 		case "thinking":
-			thinking = block.Text
+			thinking += block.Text
 		case "tool_use":
 			args, _ := json.Marshal(block.Input)
 			tc := ToolCall{
@@ -173,8 +182,8 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 
 func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
 	maxTokens := defaultMaxTokens
-	if req.MaxTokens > 0 {
-		maxTokens = req.MaxTokens
+	if limit := outputTokenLimit(req); limit > 0 {
+		maxTokens = limit
 	}
 
 	_, msgs := ExtractSystemMessage(req.Messages)
@@ -193,6 +202,15 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
+	}
+	if req.TopP > 0 {
+		body["top_p"] = req.TopP
+	}
+	if len(req.Stop) > 0 {
+		body["stop_sequences"] = req.Stop
+	}
+	if thinking := anthropicThinking(req.Reasoning); thinking != nil {
+		body["thinking"] = thinking
 	}
 	if len(req.Tools) > 0 {
 		body["tools"] = ConvertToolsToAnthropic(req.Tools)
@@ -326,6 +344,14 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 					continue
 				}
 				switch event.Delta.Type {
+				case "thinking_delta":
+					if event.Delta.Text != "" {
+						select {
+						case ch <- &StreamChunk{Reasoning: event.Delta.Text}:
+						case <-ctx.Done():
+							return
+						}
+					}
 				case "text_delta":
 					if event.Delta.Text != "" {
 						select {

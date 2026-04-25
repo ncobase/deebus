@@ -35,15 +35,31 @@ func (p *CohereProvider) Complete(ctx context.Context, req *Request) (*Response,
 		"model":    req.Model,
 		"messages": messages,
 	}
-	if req.MaxTokens > 0 {
-		body["max_tokens"] = req.MaxTokens
+	if limit := outputTokenLimit(req); limit > 0 {
+		body["max_tokens"] = limit
 	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
 	}
+	if req.TopP > 0 {
+		body["p"] = req.TopP
+	}
+	if req.ResponseFormat != nil && req.ResponseFormat.Type != "" && req.ResponseFormat.Type != "text" {
+		if req.ResponseFormat.Type == "json_schema" {
+			body["response_format"] = map[string]any{"type": "json_object", "schema": req.ResponseFormat.Schema}
+		} else {
+			body["response_format"] = map[string]any{"type": "json_object"}
+		}
+	}
 	if len(req.Tools) > 0 {
 		// Cohere v2 uses standard JSON Schema format - same as our unified Tool type.
 		body["tools"] = req.Tools
+		for _, tool := range req.Tools {
+			if tool.Function.Strict {
+				body["strict_tools"] = true
+				break
+			}
+		}
 	}
 
 	data, err := json.Marshal(body)
@@ -139,11 +155,21 @@ func (p *CohereProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		"messages": messages,
 		"stream":   true,
 	}
-	if req.MaxTokens > 0 {
-		body["max_tokens"] = req.MaxTokens
+	if limit := outputTokenLimit(req); limit > 0 {
+		body["max_tokens"] = limit
 	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
+	}
+	if req.TopP > 0 {
+		body["p"] = req.TopP
+	}
+	if req.ResponseFormat != nil && req.ResponseFormat.Type != "" && req.ResponseFormat.Type != "text" {
+		if req.ResponseFormat.Type == "json_schema" {
+			body["response_format"] = map[string]any{"type": "json_object", "schema": req.ResponseFormat.Schema}
+		} else {
+			body["response_format"] = map[string]any{"type": "json_object"}
+		}
 	}
 	if len(req.Tools) > 0 {
 		body["tools"] = req.Tools

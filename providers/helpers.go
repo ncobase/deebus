@@ -183,6 +183,9 @@ func ConvertToolsToAnthropic(tools []Tool) []map[string]any {
 			"description":  t.Function.Description,
 			"input_schema": t.Function.Parameters,
 		}
+		if t.Function.EagerInputStreaming {
+			m["eager_input_streaming"] = true
+		}
 		if t.CacheControl != nil {
 			m["cache_control"] = t.CacheControl
 		}

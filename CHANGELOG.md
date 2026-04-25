@@ -9,22 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No unreleased changes.
+
+## [1.7.0] - 2026-04-25
+
 ### Added
 
-- **`Request.Cache *CacheOptions`** - unified request-level cache controls across providers:
-  - **Anthropic**: top-level automatic `cache_control`
-  - **OpenAI**: `prompt_cache_key` and `prompt_cache_retention`
-  - **Gemini**: explicit `cachedContent` reuse
-- **Explicit cache resource management** - `Client.CreateCache`, `GetCache`, `ListCaches`, `UpdateCache`, and `DeleteCache` for providers that support cache lifecycle APIs. Gemini `cachedContents` is implemented in this release.
-- **`docs/caching.md`** - multi-provider caching reference and provider matrix.
-- **Dynamic credential support** - static bearer tokens, extra headers, runtime `CredentialProvider`, OpenAI org/project headers, and Gemini `x-goog-user-project`.
-- **`docs/auth.md`** - authentication matrix and runtime credential guidance.
-- **Unit tests** for request serialization and Gemini cache lifecycle operations.
+- OpenAI `apiMode: responses` support with `/v1/responses`, modern `max_output_tokens`, reasoning config, structured text formats, and SSE parsing for output text, reasoning deltas, tool-call argument deltas, and final usage.
+- Provider-neutral `Request` controls: `MaxOutputTokens`, `ResponseFormat`, `Reasoning`, `TopP`, `Stop`, `Seed`, `Metadata`, `Store`, and `ParallelToolCalls`.
+- Structured output mapping for Gemini (`responseMimeType` / `responseSchema`), Ollama (`format`), Cohere (`response_format`), and OpenAI Chat/Responses.
+- Anthropic extended-thinking request mapping plus streamed `thinking_delta` as `StreamChunk.Reasoning`; tools can enable `eager_input_streaming`.
+- MCP spec target updated to `2025-11-25`; tool definitions retain `outputSchema`, and tool results now prefer `structuredContent` when present.
+- Cache lifecycle APIs, runtime credential support, and provider-native cache controls are part of this release.
 
 ### Changed
 
-- **Anthropic prompt caching** - prompt caching is treated as generally available; the legacy `anthropic-beta: prompt-caching-2024-07-31` header is no longer sent.
-- **README caching docs** - updated to describe Anthropic automatic caching, OpenAI request hints, and Gemini explicit caches.
+- OpenAI Chat Completions remains the default for OpenAI-compatible providers; set `apiMode: responses` only for official Responses-compatible endpoints.
+- `Response` and `StreamChunk` now expose `Reasoning` and raw provider payloads where available.
+
+---
 
 ## [1.6.0] - 2026-03-19
 

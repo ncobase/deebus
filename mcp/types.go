@@ -51,7 +51,7 @@ func (e *rpcError) Error() string {
 }
 
 // ProtocolVersion is the MCP spec version this client targets.
-const ProtocolVersion = "2025-03-26"
+const ProtocolVersion = "2025-11-25"
 
 // Implementation identifies a client or server.
 type Implementation struct {
@@ -62,6 +62,8 @@ type Implementation struct {
 // ClientCapabilities describes what this client supports.
 type ClientCapabilities struct {
 	Experimental map[string]any `json:"experimental,omitempty"`
+	Elicitation  *struct{}      `json:"elicitation,omitempty"`
+	Roots        *struct{}      `json:"roots,omitempty"`
 }
 
 // ServerCapabilities describes what a server supports.
@@ -97,10 +99,11 @@ type initializeResult struct {
 
 // Tool is an MCP tool definition as returned by tools/list.
 type Tool struct {
-	Name        string           `json:"name"`
-	Description string           `json:"description,omitempty"`
-	InputSchema json.RawMessage  `json:"inputSchema"`
-	Annotations *ToolAnnotations `json:"annotations,omitempty"`
+	Name         string           `json:"name"`
+	Description  string           `json:"description,omitempty"`
+	InputSchema  json.RawMessage  `json:"inputSchema"`
+	OutputSchema json.RawMessage  `json:"outputSchema,omitempty"`
+	Annotations  *ToolAnnotations `json:"annotations,omitempty"`
 }
 
 // ToolAnnotations provides hints about a tool's behaviour.
@@ -139,12 +142,18 @@ type ContentItem struct {
 
 // CallToolResult is the response to a tools/call request.
 type CallToolResult struct {
-	Content []ContentItem `json:"content"`
-	IsError bool          `json:"isError,omitempty"`
+	Content           []ContentItem  `json:"content"`
+	StructuredContent map[string]any `json:"structuredContent,omitempty"`
+	IsError           bool           `json:"isError,omitempty"`
 }
 
 // Text returns the concatenated text from all text content items.
 func (r CallToolResult) Text() string {
+	if len(r.StructuredContent) > 0 {
+		if b, err := json.Marshal(r.StructuredContent); err == nil {
+			return string(b)
+		}
+	}
 	var sb strings.Builder
 	for _, item := range r.Content {
 		if item.Type == "text" && item.Text != "" {

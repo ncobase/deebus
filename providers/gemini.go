@@ -43,14 +43,28 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 		body["cachedContent"] = req.Cache.CachedContent
 	}
 
-	if req.Temperature > 0 || req.MaxTokens > 0 {
-		gc := map[string]any{}
-		if req.Temperature > 0 {
-			gc["temperature"] = req.Temperature
+	gc := map[string]any{}
+	if req.Temperature > 0 {
+		gc["temperature"] = req.Temperature
+	}
+	if req.TopP > 0 {
+		gc["topP"] = req.TopP
+	}
+	if len(req.Stop) > 0 {
+		gc["stopSequences"] = req.Stop
+	}
+	if limit := outputTokenLimit(req); limit > 0 {
+		gc["maxOutputTokens"] = limit
+	}
+	if rf := geminiResponseFormat(req.ResponseFormat); rf != nil {
+		for k, v := range rf {
+			gc[k] = v
 		}
-		if req.MaxTokens > 0 {
-			gc["maxOutputTokens"] = req.MaxTokens
-		}
+	}
+	if thinking := geminiThinkingConfig(req.Reasoning); thinking != nil {
+		gc["thinkingConfig"] = thinking
+	}
+	if len(gc) > 0 {
 		body["generationConfig"] = gc
 	}
 
@@ -177,14 +191,28 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		body["cachedContent"] = req.Cache.CachedContent
 	}
 
-	if req.Temperature > 0 || req.MaxTokens > 0 {
-		gc := map[string]any{}
-		if req.Temperature > 0 {
-			gc["temperature"] = req.Temperature
+	gc := map[string]any{}
+	if req.Temperature > 0 {
+		gc["temperature"] = req.Temperature
+	}
+	if req.TopP > 0 {
+		gc["topP"] = req.TopP
+	}
+	if len(req.Stop) > 0 {
+		gc["stopSequences"] = req.Stop
+	}
+	if limit := outputTokenLimit(req); limit > 0 {
+		gc["maxOutputTokens"] = limit
+	}
+	if rf := geminiResponseFormat(req.ResponseFormat); rf != nil {
+		for k, v := range rf {
+			gc[k] = v
 		}
-		if req.MaxTokens > 0 {
-			gc["maxOutputTokens"] = req.MaxTokens
-		}
+	}
+	if thinking := geminiThinkingConfig(req.Reasoning); thinking != nil {
+		gc["thinkingConfig"] = thinking
+	}
+	if len(gc) > 0 {
 		body["generationConfig"] = gc
 	}
 

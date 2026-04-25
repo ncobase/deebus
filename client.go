@@ -61,6 +61,7 @@ type ProviderConfig struct {
 	APIKey             string             `yaml:"apiKey"`
 	BearerToken        string             `yaml:"bearerToken"`
 	BaseURL            string             `yaml:"baseURL"`
+	APIMode            string             `yaml:"apiMode"`
 	Headers            map[string]string  `yaml:"headers"`
 	Organization       string             `yaml:"organization"`
 	Project            string             `yaml:"project"`
@@ -394,6 +395,7 @@ func buildProvider(
 		APIKey:             cfg.APIKey,
 		BearerToken:        cfg.BearerToken,
 		BaseURL:            cfg.BaseURL,
+		APIMode:            cfg.APIMode,
 		Timeout:            timeout,
 		Headers:            cloneStringMap(cfg.Headers),
 		Organization:       cfg.Organization,

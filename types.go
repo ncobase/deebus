@@ -37,9 +37,11 @@ type (
 	DocumentSource  = providers.DocumentSource
 
 	// Tool types.
-	Tool           = providers.Tool
-	FunctionSchema = providers.FunctionSchema
-	ToolCall       = providers.ToolCall
+	Tool            = providers.Tool
+	FunctionSchema  = providers.FunctionSchema
+	ToolCall        = providers.ToolCall
+	ResponseFormat  = providers.ResponseFormat
+	ReasoningConfig = providers.ReasoningConfig
 )
 
 // Message constructors expose providers helpers through the root package.

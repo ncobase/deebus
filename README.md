@@ -20,11 +20,12 @@
 | **Tool calling**            | Function/tool use for all five providers with streaming assembly                                                                         |
 | **Multi-turn tool calling** | `AssistantMessage` / `ToolResultMessage` with per-provider wire format                                                                   |
 | **Agent loop**              | `RunAgent` / `RunAgentStream` with parallel tool dispatch and event hooks                                                                |
-| **MCP client**              | Connects to any MCP server via stdio or Streamable HTTP (spec 2025-03-26)                                                                |
+| **MCP client**              | Connects to any MCP server via stdio or Streamable HTTP (spec 2025-11-25)                                                                |
 | **Prompt caching**          | Anthropic block/request caching, OpenAI request hints, Gemini explicit caches; `CacheUsage` in response                                  |
-| **Streaming**               | SSE / NDJSON streaming for all five providers                                                                                            |
+| **Streaming**               | SSE / NDJSON streaming for all five providers, including tool-call assembly and reasoning deltas                              |
 | **Multimodal**              | Text, images (URL / base64), audio, PDF documents                                                                                        |
 | **Embeddings**              | OpenAI, Gemini, Ollama, Cohere                                                                                                           |
+| **Structured outputs**      | JSON object / JSON Schema response formats mapped across OpenAI, Gemini, Ollama, and Cohere                                  |
 | **Structured logging**      | Pluggable `Logger` interface; defaults to no-op                                                                                          |
 | **Usage statistics**        | Per-request input/output/cache token counters; ReasoningTokens for o-series/thinking models; aggregate Stats with cache hit/write totals |
 | **Zero dependencies**       | Only `gopkg.in/yaml.v3` for optional YAML loading                                                                                        |
@@ -119,6 +120,7 @@ func main() {
 | `apiKey`       | string | Yes\*    | API key. Optional when `bearerToken`, `headers`, or `CredentialProvider` supplies credentials. |
 | `bearerToken`  | string | -        | Static bearer token for OAuth-style or proxy auth                                              |
 | `baseURL`      | string | Yes      | Must use `https://` or `http://localhost` / `http://127.0.0.1` / `http://0.0.0.0`              |
+| `apiMode`      | string | -        | OpenAI only: `chat_completions` default or `responses` for the modern Responses API            |
 | `headers`      | map    | -        | Extra static headers sent on every request                                                     |
 | `organization` | string | -        | OpenAI `OpenAI-Organization` header                                                            |
 | `project`      | string | -        | OpenAI `OpenAI-Project` header                                                                 |
@@ -144,6 +146,18 @@ client, err := deebus.NewClient(deebus.Config{
     Retry:     2,
 })
 ```
+
+
+### Modern request controls
+
+`Request` supports provider-neutral controls for current model APIs:
+
+- `MaxOutputTokens` for modern output limits while keeping `MaxTokens` backward compatible.
+- `ResponseFormat` for JSON object / JSON Schema structured outputs.
+- `Reasoning` for effort, thinking budgets, and provider-visible thought summaries.
+- `TopP`, `Stop`, `Seed`, `Metadata`, `Store`, and `ParallelToolCalls` for providers that support them.
+
+OpenAI can use the Responses API by setting `apiMode: responses` on the provider config; OpenAI-compatible gateways can keep the default Chat Completions mode.
 
 ### Optional YAML loading
 
