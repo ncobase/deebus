@@ -53,6 +53,11 @@ func (m *mockProvider) Embed(ctx context.Context, req *providers.EmbedRequest) (
 
 func (m *mockProvider) Health(ctx context.Context) error { return nil }
 
+func (m *mockProvider) ListModels(ctx context.Context) ([]string, error) {
+	m.callCount.Add(1)
+	return []string{"mock-model"}, nil
+}
+
 type mockCacheProvider struct {
 	*mockProvider
 	createCacheFn func(context.Context, *providers.CreateCacheRequest) (*providers.Cache, error)

@@ -63,8 +63,12 @@ func (p *GeminiProvider) CreateCache(ctx context.Context, req *CreateCacheReques
 		return nil, fmt.Errorf("resolve credentials: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.geminiURL(creds, "/v1beta/cachedContents", ""), bytes.NewReader(data))
+	endpoint, err := p.geminiURL(creds, "/v1beta/cachedContents", "")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -98,8 +102,12 @@ func (p *GeminiProvider) GetCache(ctx context.Context, name string) (*Cache, err
 		return nil, fmt.Errorf("resolve credentials: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		p.geminiURL(creds, "/v1beta/"+name, ""), nil)
+	endpoint, err := p.geminiURL(creds, "/v1beta/"+name, "")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -140,8 +148,12 @@ func (p *GeminiProvider) ListCaches(ctx context.Context, req *ListCachesRequest)
 		return nil, fmt.Errorf("resolve credentials: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		p.geminiURL(creds, "/v1beta/cachedContents", query.Encode()), nil)
+	endpoint, err := p.geminiURL(creds, "/v1beta/cachedContents", query.Encode())
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -210,8 +222,12 @@ func (p *GeminiProvider) UpdateCache(ctx context.Context, req *UpdateCacheReques
 		return nil, fmt.Errorf("resolve credentials: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPatch,
-		p.geminiURL(creds, "/v1beta/"+req.Name, ""), bytes.NewReader(data))
+	endpoint, err := p.geminiURL(creds, "/v1beta/"+req.Name, "")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPatch, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -245,8 +261,12 @@ func (p *GeminiProvider) DeleteCache(ctx context.Context, name string) error {
 		return fmt.Errorf("resolve credentials: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete,
-		p.geminiURL(creds, "/v1beta/"+name, ""), nil)
+	endpoint, err := p.geminiURL(creds, "/v1beta/"+name, "")
+	if err != nil {
+		return err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}

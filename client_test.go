@@ -250,10 +250,21 @@ func TestClientConcurrency(t *testing.T) {
 }
 
 func TestClientHealth(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %s, want /v1/models", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"id": "gpt-5.4-mini"}},
+		})
+	}))
+	defer srv.Close()
+
 	c, err := NewClient(Config{
 		Primary: "openai/gpt-4o",
 		Providers: map[string]ProviderConfig{
-			"openai": {Type: "openai", APIKey: "sk-test", BaseURL: "https://api.openai.com"},
+			"openai": {Type: "openai", APIKey: "sk-test", BaseURL: srv.URL},
 		},
 	})
 	if err != nil {
@@ -263,6 +274,44 @@ func TestClientHealth(t *testing.T) {
 	results := c.Health(context.Background())
 	if _, ok := results["openai"]; !ok {
 		t.Error("Health() must return an entry for every configured provider")
+	}
+	if results["openai"] != nil {
+		t.Fatalf("Health() error = %v", results["openai"])
+	}
+}
+
+func TestClientListModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %s, want /v1/models", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"id": "gpt-5.4-mini"},
+				{"id": "gpt-5.4"},
+				{"id": "gpt-5.4-mini"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(Config{
+		Primary: "openai/gpt-4o",
+		Providers: map[string]ProviderConfig{
+			"openai": {Type: "openai", APIKey: "sk-test", BaseURL: srv.URL},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	models, err := c.ListModels(context.Background(), "openai")
+	if err != nil {
+		t.Fatalf("ListModels() error: %v", err)
+	}
+	if len(models) != 2 || models[0] != "gpt-5.4" || models[1] != "gpt-5.4-mini" {
+		t.Fatalf("models = %#v", models)
 	}
 }
 

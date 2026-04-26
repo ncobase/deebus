@@ -96,6 +96,26 @@ func (m *RetryMiddleware) Health(ctx context.Context) error {
 	return m.provider.Health(ctx)
 }
 
+func (m *RetryMiddleware) ListModels(ctx context.Context) ([]string, error) {
+	var lastErr error
+	for attempt := 0; attempt <= m.maxRetries; attempt++ {
+		resp, err := m.provider.ListModels(ctx)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !providers.IsRetryable(err) {
+			return nil, err
+		}
+		if attempt < m.maxRetries {
+			if err := sleepWithContext(ctx, m.backoff(attempt, retryAfter(err))); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return nil, lastErr
+}
+
 func (m *RetryMiddleware) CreateCache(ctx context.Context, req *providers.CreateCacheRequest) (*providers.Cache, error) {
 	cp, err := cacheProvider(m.provider)
 	if err != nil {

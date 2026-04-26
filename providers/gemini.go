@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -85,7 +86,10 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 		return nil, fmt.Errorf("resolve credentials: %w", err)
 	}
 
-	url := p.geminiURL(creds, fmt.Sprintf("/v1beta/models/%s:generateContent", req.Model), "")
+	url, err := p.geminiURL(creds, fmt.Sprintf("/v1beta/models/%s:generateContent", req.Model), "")
+	if err != nil {
+		return nil, err
+	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
@@ -233,7 +237,10 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		return nil, fmt.Errorf("resolve credentials: %w", err)
 	}
 
-	url := p.geminiURL(creds, fmt.Sprintf("/v1beta/models/%s:streamGenerateContent", req.Model), "alt=sse")
+	url, err := p.geminiURL(creds, fmt.Sprintf("/v1beta/models/%s:streamGenerateContent", req.Model), "alt=sse")
+	if err != nil {
+		return nil, err
+	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
@@ -379,7 +386,10 @@ func (p *GeminiProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 		return nil, fmt.Errorf("resolve credentials: %w", err)
 	}
 
-	url := p.geminiURL(creds, fmt.Sprintf("/v1beta/models/%s:batchEmbedContents", req.Model), "")
+	url, err := p.geminiURL(creds, fmt.Sprintf("/v1beta/models/%s:batchEmbedContents", req.Model), "")
+	if err != nil {
+		return nil, err
+	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
@@ -419,7 +429,86 @@ func (p *GeminiProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 	}, nil
 }
 
-func (p *GeminiProvider) Health(_ context.Context) error { return nil }
+func (p *GeminiProvider) ListModels(ctx context.Context) ([]string, error) {
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+
+	nextPageToken := ""
+	models := make([]string, 0)
+	for {
+		query := url.Values{}
+		query.Set("pageSize", "200")
+		if nextPageToken != "" {
+			query.Set("pageToken", nextPageToken)
+		}
+
+		endpoint, err := p.geminiURL(creds, "/v1beta/models", query.Encode())
+		if err != nil {
+			return nil, err
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		p.setHeaders(httpReq, creds)
+
+		var payload struct {
+			Models []struct {
+				Name                       string   `json:"name"`
+				BaseModelID                string   `json:"baseModelId"`
+				SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
+			} `json:"models"`
+			NextPageToken string `json:"nextPageToken"`
+		}
+		if err := doProviderJSONRequest(ctx, p.client, httpReq, p.Name(), &payload); err != nil {
+			return nil, err
+		}
+
+		for _, item := range payload.Models {
+			if !supportsGeminiGeneration(item.SupportedGenerationMethods) {
+				continue
+			}
+			model := strings.TrimSpace(item.BaseModelID)
+			if model == "" {
+				model = strings.TrimPrefix(strings.TrimSpace(item.Name), "models/")
+			}
+			models = append(models, model)
+		}
+
+		nextPageToken = strings.TrimSpace(payload.NextPageToken)
+		if nextPageToken == "" {
+			break
+		}
+	}
+
+	return normalizeModelNames(models), nil
+}
+
+func (p *GeminiProvider) Health(ctx context.Context) error {
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve credentials: %w", err)
+	}
+
+	query := url.Values{}
+	query.Set("pageSize", "1")
+
+	endpoint, err := p.geminiURL(creds, "/v1beta/models", query.Encode())
+	if err != nil {
+		return err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
+
+	return doProviderJSONRequest(ctx, p.client, httpReq, p.Name(), &struct{}{})
+}
 
 func (p *GeminiProvider) setHeaders(r *http.Request, creds Credentials) {
 	r.Header.Set("Content-Type", "application/json")
@@ -439,19 +528,22 @@ func (p *GeminiProvider) setHeaders(r *http.Request, creds Credentials) {
 // For the native Google API (googleapis.com) the key is passed as a query
 // parameter (?key=); for all other base URLs the key is omitted from the URL
 // and authentication relies on the Authorization: Bearer header instead.
-func (p *GeminiProvider) geminiURL(creds Credentials, path, extraQuery string) string {
-	base := p.cfg.BaseURL + path
+func (p *GeminiProvider) geminiURL(creds Credentials, path, extraQuery string) (string, error) {
+	base, err := buildProviderEndpoint(p.cfg.BaseURL, path)
+	if err != nil {
+		return "", err
+	}
 	if strings.Contains(p.cfg.BaseURL, "googleapis.com") && creds.BearerToken == "" && creds.APIKey != "" {
 		q := "key=" + creds.APIKey
 		if extraQuery != "" {
 			q += "&" + extraQuery
 		}
-		return base + "?" + q
+		return base + "?" + q, nil
 	}
 	if extraQuery != "" {
-		return base + "?" + extraQuery
+		return base + "?" + extraQuery, nil
 	}
-	return base
+	return base, nil
 }
 
 // geminiTaskType maps a unified InputType string to a Gemini taskType constant.

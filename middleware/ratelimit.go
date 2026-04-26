@@ -59,6 +59,13 @@ func (r *RateLimitMiddleware) Health(ctx context.Context) error {
 	return r.provider.Health(ctx)
 }
 
+func (r *RateLimitMiddleware) ListModels(ctx context.Context) ([]string, error) {
+	if err := r.acquire(ctx); err != nil {
+		return nil, err
+	}
+	return r.provider.ListModels(ctx)
+}
+
 func (r *RateLimitMiddleware) CreateCache(ctx context.Context, req *providers.CreateCacheRequest) (*providers.Cache, error) {
 	cp, err := cacheProvider(r.provider)
 	if err != nil {

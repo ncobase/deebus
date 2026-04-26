@@ -18,6 +18,9 @@ type Provider interface {
 	// Embed generates vector embeddings for the given input strings.
 	Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, error)
 
+	// ListModels returns the currently available model identifiers for the provider.
+	ListModels(ctx context.Context) ([]string, error)
+
 	// Name returns the provider's canonical identifier (e.g. "openai").
 	Name() string
 

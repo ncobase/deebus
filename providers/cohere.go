@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -67,8 +68,12 @@ func (p *CohereProvider) Complete(ctx context.Context, req *Request) (*Response,
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.cfg.BaseURL+"/v2/chat", bytes.NewReader(data))
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v2/chat")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -180,8 +185,12 @@ func (p *CohereProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.cfg.BaseURL+"/v2/chat", bytes.NewReader(data))
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v2/chat")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -327,8 +336,12 @@ func (p *CohereProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.cfg.BaseURL+"/v1/embed", bytes.NewReader(data))
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/embed")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -369,7 +382,87 @@ func (p *CohereProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 	}, nil
 }
 
-func (p *CohereProvider) Health(_ context.Context) error { return nil }
+func (p *CohereProvider) ListModels(ctx context.Context) ([]string, error) {
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+
+	nextPageToken := ""
+	models := make([]string, 0)
+	for {
+		endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/models")
+		if err != nil {
+			return nil, err
+		}
+
+		query := url.Values{}
+		query.Set("endpoint", "chat")
+		query.Set("page_size", "1000")
+		if nextPageToken != "" {
+			query.Set("page_token", nextPageToken)
+		}
+		endpoint = endpoint + "?" + query.Encode()
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		p.setHeaders(httpReq, creds)
+
+		var payload struct {
+			Models []struct {
+				Name         string   `json:"name"`
+				IsDeprecated bool     `json:"is_deprecated"`
+				Endpoints    []string `json:"endpoints"`
+				Features     []string `json:"features"`
+			} `json:"models"`
+			NextPageToken string `json:"next_page_token"`
+		}
+		if err := doProviderJSONRequest(ctx, p.client, httpReq, p.Name(), &payload); err != nil {
+			return nil, err
+		}
+
+		for _, item := range payload.Models {
+			if item.IsDeprecated || !supportsCohereChat(item.Endpoints, item.Features) {
+				continue
+			}
+			models = append(models, item.Name)
+		}
+
+		nextPageToken = strings.TrimSpace(payload.NextPageToken)
+		if nextPageToken == "" {
+			break
+		}
+	}
+
+	return normalizeModelNames(models), nil
+}
+
+func (p *CohereProvider) Health(ctx context.Context) error {
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve credentials: %w", err)
+	}
+
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/models")
+	if err != nil {
+		return err
+	}
+
+	query := url.Values{}
+	query.Set("endpoint", "chat")
+	query.Set("page_size", "1")
+	endpoint = endpoint + "?" + query.Encode()
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
+
+	return doProviderJSONRequest(ctx, p.client, httpReq, p.Name(), &struct{}{})
+}
 
 func (p *CohereProvider) setHeaders(r *http.Request, creds Credentials) {
 	r.Header.Set("Content-Type", "application/json")

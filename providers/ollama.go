@@ -102,12 +102,20 @@ func (p *OllamaProvider) Complete(ctx context.Context, req *Request) (*Response,
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.cfg.BaseURL+"/api/chat", bytes.NewReader(data))
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/api/chat")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -212,12 +220,20 @@ func (p *OllamaProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.cfg.BaseURL+"/api/chat", bytes.NewReader(data))
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/api/chat")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -314,12 +330,20 @@ func (p *OllamaProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.cfg.BaseURL+"/api/embed", bytes.NewReader(data))
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/api/embed")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -347,4 +371,71 @@ func (p *OllamaProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 	}, nil
 }
 
-func (p *OllamaProvider) Health(_ context.Context) error { return nil }
+func (p *OllamaProvider) ListModels(ctx context.Context) ([]string, error) {
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/api/tags")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
+
+	var payload struct {
+		Models []struct {
+			Name  string `json:"name"`
+			Model string `json:"model"`
+		} `json:"models"`
+	}
+	if err := doProviderJSONRequest(ctx, p.client, httpReq, p.Name(), &payload); err != nil {
+		return nil, err
+	}
+
+	models := make([]string, 0, len(payload.Models))
+	for _, item := range payload.Models {
+		model := strings.TrimSpace(item.Model)
+		if model == "" {
+			model = strings.TrimSpace(item.Name)
+		}
+		models = append(models, model)
+	}
+	return normalizeModelNames(models), nil
+}
+
+func (p *OllamaProvider) Health(ctx context.Context) error {
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/api/tags")
+	if err != nil {
+		return err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve credentials: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
+
+	return doProviderJSONRequest(ctx, p.client, httpReq, p.Name(), &struct{}{})
+}
+
+func (p *OllamaProvider) setHeaders(r *http.Request, creds Credentials) {
+	r.Header.Set("Content-Type", "application/json")
+	switch {
+	case creds.BearerToken != "":
+		r.Header.Set("Authorization", "Bearer "+creds.BearerToken)
+	case creds.APIKey != "":
+		r.Header.Set("Authorization", "Bearer "+creds.APIKey)
+	}
+	applyHeaders(r, creds.Headers)
+}

@@ -105,6 +105,10 @@ func (m *LoggingMiddleware) Health(ctx context.Context) error {
 	return m.provider.Health(ctx)
 }
 
+func (m *LoggingMiddleware) ListModels(ctx context.Context) ([]string, error) {
+	return m.provider.ListModels(ctx)
+}
+
 func (m *LoggingMiddleware) CreateCache(ctx context.Context, req *providers.CreateCacheRequest) (*providers.Cache, error) {
 	cp, err := cacheProvider(m.provider)
 	if err != nil {

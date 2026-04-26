@@ -76,8 +76,12 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.cfg.BaseURL+"/v1/chat/completions", bytes.NewReader(data))
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/chat/completions")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -248,8 +252,12 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.cfg.BaseURL+"/v1/chat/completions", bytes.NewReader(data))
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/chat/completions")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -485,8 +493,12 @@ func (p *OpenAIProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.cfg.BaseURL+"/v1/embeddings", bytes.NewReader(data))
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/embeddings")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -546,7 +558,58 @@ func normalizeOpenAICacheRetention(retention string) (string, error) {
 	}
 }
 
-func (p *OpenAIProvider) Health(_ context.Context) error { return nil }
+func (p *OpenAIProvider) ListModels(ctx context.Context) ([]string, error) {
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/models")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
+
+	var payload struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := doProviderJSONRequest(ctx, p.client, httpReq, p.Name(), &payload); err != nil {
+		return nil, err
+	}
+
+	models := make([]string, 0, len(payload.Data))
+	for _, item := range payload.Data {
+		models = append(models, item.ID)
+	}
+	return normalizeModelNames(models), nil
+}
+
+func (p *OpenAIProvider) Health(ctx context.Context) error {
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/models")
+	if err != nil {
+		return err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	creds, err := p.cfg.credentials(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve credentials: %w", err)
+	}
+	p.setHeaders(httpReq, creds)
+
+	return doProviderJSONRequest(ctx, p.client, httpReq, p.Name(), &struct{}{})
+}
 
 func (p *OpenAIProvider) setHeaders(r *http.Request, creds Credentials) {
 	r.Header.Set("Content-Type", "application/json")
@@ -571,7 +634,12 @@ func (p *OpenAIProvider) completeResponses(ctx context.Context, req *Request) (*
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.cfg.BaseURL+"/v1/responses", bytes.NewReader(data))
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/responses")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -603,7 +671,12 @@ func (p *OpenAIProvider) streamResponses(ctx context.Context, req *Request) (<-c
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.cfg.BaseURL+"/v1/responses", bytes.NewReader(data))
+	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/responses")
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

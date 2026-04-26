@@ -313,6 +313,15 @@ func (c *Client) Health(ctx context.Context) map[string]error {
 	return results
 }
 
+// ListModels returns the model catalog for a configured provider name.
+func (c *Client) ListModels(ctx context.Context, providerName string) ([]string, error) {
+	p, ok := c.getProvider(providerName)
+	if !ok {
+		return nil, fmt.Errorf("provider %q not configured", providerName)
+	}
+	return p.ListModels(ctx)
+}
+
 // wrapStream proxies chunks from in to a new channel, recording Stats when
 // the stream ends (success or failure). It also guards against the consumer
 // stopping mid-stream by honouring ctx cancellation on every send.

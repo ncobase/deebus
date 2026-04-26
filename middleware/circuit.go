@@ -60,6 +60,15 @@ func (m *CircuitBreakerMiddleware) Health(ctx context.Context) error {
 	return m.provider.Health(ctx)
 }
 
+func (m *CircuitBreakerMiddleware) ListModels(ctx context.Context) ([]string, error) {
+	if err := m.allow(); err != nil {
+		return nil, err
+	}
+	resp, err := m.provider.ListModels(ctx)
+	m.record(err)
+	return resp, err
+}
+
 func (m *CircuitBreakerMiddleware) CreateCache(ctx context.Context, req *providers.CreateCacheRequest) (*providers.Cache, error) {
 	cp, err := cacheProvider(m.provider)
 	if err != nil {

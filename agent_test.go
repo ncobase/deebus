@@ -56,6 +56,9 @@ func (p *agentMockProvider) Embed(_ context.Context, _ *providers.EmbedRequest) 
 
 func (p *agentMockProvider) Name() string                   { return "mock" }
 func (p *agentMockProvider) Health(_ context.Context) error { return nil }
+func (p *agentMockProvider) ListModels(_ context.Context) ([]string, error) {
+	return []string{"mock-model"}, nil
+}
 
 // toolCall constructs a ToolCall.
 func toolCall(id, name, args string) providers.ToolCall {

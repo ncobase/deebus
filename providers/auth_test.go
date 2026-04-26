@@ -224,7 +224,10 @@ func TestGeminiCompleteUsesBearerTokenAndUserProject(t *testing.T) {
 func TestGeminiURLUsesAPIKeyOnlyWhenNoBearerToken(t *testing.T) {
 	p := NewGemini(Config{BaseURL: "https://generativelanguage.googleapis.com"})
 
-	url := p.geminiURL(Credentials{APIKey: "api-key"}, "/v1beta/models/gemini-2.5-flash:generateContent", "alt=sse")
+	url, err := p.geminiURL(Credentials{APIKey: "api-key"}, "/v1beta/models/gemini-2.5-flash:generateContent", "alt=sse")
+	if err != nil {
+		t.Fatalf("geminiURL: %v", err)
+	}
 	if !strings.Contains(url, "key=api-key") {
 		t.Fatalf("geminiURL missing API key query: %q", url)
 	}
@@ -232,7 +235,10 @@ func TestGeminiURLUsesAPIKeyOnlyWhenNoBearerToken(t *testing.T) {
 		t.Fatalf("geminiURL missing extra query: %q", url)
 	}
 
-	url = p.geminiURL(Credentials{APIKey: "api-key", BearerToken: "oauth-token"}, "/v1beta/models/gemini-2.5-flash:generateContent", "alt=sse")
+	url, err = p.geminiURL(Credentials{APIKey: "api-key", BearerToken: "oauth-token"}, "/v1beta/models/gemini-2.5-flash:generateContent", "alt=sse")
+	if err != nil {
+		t.Fatalf("geminiURL: %v", err)
+	}
 	if strings.Contains(url, "key=api-key") {
 		t.Fatalf("geminiURL should omit API key when bearer token is present: %q", url)
 	}
