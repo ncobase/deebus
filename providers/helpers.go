@@ -1,6 +1,9 @@
 package providers
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // TextMessage creates a single-text-block message.
 func TextMessage(role, text string) Message {
@@ -122,10 +125,6 @@ func BuildAnthropicSystem(messages []Message) any {
 			needsBlocks = true
 			break
 		}
-		if dc, ok := b.(DocumentContent); ok && dc.CacheControl != nil {
-			needsBlocks = true
-			break
-		}
 	}
 
 	if !needsBlocks {
@@ -153,18 +152,7 @@ func BuildAnthropicSystem(messages []Message) any {
 			}
 			parts = append(parts, block)
 		case DocumentContent:
-			block := map[string]any{
-				"type": "document",
-				"source": map[string]any{
-					"type":       tc.Source.Type,
-					"media_type": tc.Source.MediaType,
-					"data":       tc.Source.Data,
-				},
-			}
-			if tc.CacheControl != nil {
-				block["cache_control"] = tc.CacheControl
-			}
-			parts = append(parts, block)
+			continue
 		}
 	}
 	return parts
@@ -276,6 +264,48 @@ func ConvertToOpenAIFormat(messages []Message) []map[string]any {
 	return out
 }
 
+// ConvertToOpenAIResponsesInput converts messages to the OpenAI Responses API
+// input format. Responses uses input_text/input_image/input_file content blocks,
+// which differ from Chat Completions content part names.
+func ConvertToOpenAIResponsesInput(messages []Message) []map[string]any {
+	out := make([]map[string]any, 0, len(messages))
+	for _, msg := range messages {
+		switch msg.Role {
+		case "tool":
+			out = append(out, map[string]any{
+				"type":    "function_call_output",
+				"call_id": msg.ToolCallID,
+				"output":  ExtractText(msg.Content),
+			})
+
+		case "assistant":
+			if len(msg.ToolCalls) > 0 {
+				if text := ExtractText(msg.Content); text != "" {
+					out = append(out, map[string]any{
+						"type":    "message",
+						"role":    "assistant",
+						"content": []map[string]any{{"type": "output_text", "text": text}},
+					})
+				}
+				for _, tc := range msg.ToolCalls {
+					out = append(out, map[string]any{
+						"type":      "function_call",
+						"call_id":   tc.ID,
+						"name":      tc.Function.Name,
+						"arguments": tc.Function.Arguments,
+					})
+				}
+			} else {
+				out = append(out, openAIResponsesMessage(msg))
+			}
+
+		default:
+			out = append(out, openAIResponsesMessage(msg))
+		}
+	}
+	return out
+}
+
 // openAIContentMessage serialises a regular message's content blocks.
 func openAIContentMessage(msg Message) map[string]any {
 	parts := make([]map[string]any, 0, len(msg.Content))
@@ -308,6 +338,48 @@ func openAIContentMessage(msg Message) map[string]any {
 		}
 	}
 	return map[string]any{"role": msg.Role, "content": parts}
+}
+
+func openAIResponsesMessage(msg Message) map[string]any {
+	parts := make([]map[string]any, 0, len(msg.Content))
+	for _, block := range msg.Content {
+		switch b := block.(type) {
+		case TextContent:
+			parts = append(parts, map[string]any{"type": "input_text", "text": b.Text})
+		case ImageContent:
+			item := map[string]any{"type": "input_image"}
+			if b.Detail != "" {
+				item["detail"] = b.Detail
+			}
+			switch b.Source.Type {
+			case "file_id":
+				item["file_id"] = b.Source.FileID
+			case "base64":
+				item["image_url"] = dataURL(b.Source.MediaType, b.Source.Data)
+			default:
+				item["image_url"] = b.Source.URL
+			}
+			parts = append(parts, item)
+		case AudioContent:
+			parts = append(parts, map[string]any{
+				"type": "input_audio",
+				"input_audio": map[string]any{
+					"data":   b.Source.Data,
+					"format": b.Source.Format,
+				},
+			})
+		case DocumentContent:
+			item := map[string]any{"type": "input_file"}
+			switch b.Source.Type {
+			case "base64":
+				item["file_data"] = dataURL(b.Source.MediaType, b.Source.Data)
+			case "url":
+				item["file_url"] = b.Source.URL
+			}
+			parts = append(parts, item)
+		}
+	}
+	return map[string]any{"type": "message", "role": msg.Role, "content": parts}
 }
 
 // ConvertToAnthropicFormat converts non-system messages to the Anthropic Messages
@@ -398,12 +470,8 @@ func anthropicContentMessage(msg Message) map[string]any {
 			parts = append(parts, m)
 		case DocumentContent:
 			m := map[string]any{
-				"type": "document",
-				"source": map[string]any{
-					"type":       b.Source.Type,
-					"media_type": b.Source.MediaType,
-					"data":       b.Source.Data,
-				},
+				"type":   "document",
+				"source": anthropicDocumentSourceMap(b.Source),
 			}
 			if b.CacheControl != nil {
 				m["cache_control"] = b.CacheControl
@@ -492,13 +560,78 @@ func geminiContentMessage(msg Message, role string) map[string]any {
 					},
 				})
 			} else if b.Source.Type == "url" {
+				item := map[string]any{"file_uri": b.Source.URL}
+				if b.Source.MediaType != "" {
+					item["mime_type"] = b.Source.MediaType
+				}
 				parts = append(parts, map[string]any{
-					"file_data": map[string]any{"file_uri": b.Source.URL},
+					"file_data": item,
 				})
+			}
+		case AudioContent:
+			parts = append(parts, map[string]any{
+				"inline_data": map[string]any{
+					"mime_type": audioMimeType(b.Source.Format),
+					"data":      b.Source.Data,
+				},
+			})
+		case DocumentContent:
+			switch b.Source.Type {
+			case "base64":
+				parts = append(parts, map[string]any{
+					"inline_data": map[string]any{
+						"mime_type": b.Source.MediaType,
+						"data":      b.Source.Data,
+					},
+				})
+			case "url":
+				item := map[string]any{"file_uri": b.Source.URL}
+				if b.Source.MediaType != "" {
+					item["mime_type"] = b.Source.MediaType
+				}
+				parts = append(parts, map[string]any{"file_data": item})
 			}
 		}
 	}
 	return map[string]any{"role": role, "parts": parts}
+}
+
+func anthropicDocumentSourceMap(source DocumentSource) map[string]any {
+	out := map[string]any{"type": source.Type}
+	if source.MediaType != "" {
+		out["media_type"] = source.MediaType
+	}
+	switch source.Type {
+	case "base64":
+		out["data"] = source.Data
+	case "url":
+		out["url"] = source.URL
+	default:
+		if source.Data != "" {
+			out["data"] = source.Data
+		}
+		if source.URL != "" {
+			out["url"] = source.URL
+		}
+	}
+	return out
+}
+
+func dataURL(mediaType, data string) string {
+	if mediaType == "" {
+		mediaType = "application/octet-stream"
+	}
+	return "data:" + mediaType + ";base64," + data
+}
+
+func audioMimeType(format string) string {
+	if format == "" {
+		return "audio/wav"
+	}
+	if strings.Contains(format, "/") {
+		return format
+	}
+	return "audio/" + format
 }
 
 // MarshalJSON implements json.Marshaler for Message, handling the ContentBlock

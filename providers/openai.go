@@ -708,7 +708,7 @@ func (p *OpenAIProvider) streamResponses(ctx context.Context, req *Request) (<-c
 func (p *OpenAIProvider) responsesBody(req *Request, stream bool) map[string]any {
 	body := map[string]any{
 		"model": req.Model,
-		"input": ConvertToOpenAIFormat(req.Messages),
+		"input": ConvertToOpenAIResponsesInput(req.Messages),
 	}
 	if stream {
 		body["stream"] = true

@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes.
 
+## [1.7.1] - 2026-06-08
+
+### Fixed
+
+- OpenAI `apiMode: responses` now serialises request content with Responses API input block types (`input_text`, `input_image`, `input_file`) instead of Chat Completions content block names.
+- Anthropic document content now preserves URL document sources in message content blocks.
+- Gemini content conversion now preserves audio and document inputs instead of dropping them during request serialisation.
+
 ## [1.7.0] - 2026-04-25
 
 ### Added
