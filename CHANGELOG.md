@@ -7,9 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [1.8.0] - 2026-06-21
 
-No unreleased changes.
+### Added
+
+- Optional gateway governance layer:
+  - `Config.RequestPolicy` applies provider-neutral request limits, request defaults, prompt-cache hint injection, cache-breaker rewrites, and prompt-safe snapshots before `Complete` and `Stream` provider attempts.
+  - `CloneRequest` deep-copies requests so policy and provider preparation can mutate a request without changing caller-owned values.
+  - `RequestLimits`, `RequestPolicy`, `PromptCachePolicy`, `CacheBreakerPolicy`, `RequestSnapshot`, and `FingerprintRequest` support gateway-side validation and audit records without storing prompt text or raw tool-call arguments.
+  - `RequestPolicyReporter` and `RequestPolicyReporterFunc` let applications receive success and rejection reports from client-managed policy application, with optional strict failure behavior through `FailOnReporterError`.
+  - `BuildPromptCacheKey` builds sanitized, length-bounded cache-affinity keys.
+  - `NormalizeAnthropicBillingHeaderCCH` optionally normalizes known Anthropic billing-header cache-busting markers in system prompts.
+- `StreamAccumulator` and `CollectStream` aggregate streamed content, reasoning, tool calls, final token usage, cache usage, timing, and partial results on stream errors.
+- `TokenPricing`, `CostBreakdown`, `EstimateResponseCost`, `EstimateStreamCost`, and `EstimateEmbeddingCost` estimate costs from provider-reported tokens using caller-supplied pricing.
+- `docs/gateway.md` documents gateway responsibilities, request policy configuration, prompt cache affinity, safe snapshots, stream aggregation, cost estimation, and application-layer boundaries.
+
+### Changed
+
+- `Client.Complete` and `Client.Stream` now prepare each provider attempt from a fresh deep clone of the original request before setting the target model and applying optional request policy. Existing behavior is unchanged when `RequestPolicy` is zero.
 
 ## [1.7.1] - 2026-06-08
 

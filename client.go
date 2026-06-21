@@ -42,6 +42,10 @@ type Config struct {
 	// CircuitBreaker configures the per-provider circuit breaker.
 	// Zero MaxFailures disables the circuit breaker entirely.
 	CircuitBreaker CircuitBreakerConfig `yaml:"circuitBreaker"`
+
+	// RequestPolicy optionally validates, normalizes, and snapshots requests
+	// before each provider attempt. The zero value is disabled.
+	RequestPolicy RequestPolicy `yaml:"requestPolicy"`
 }
 
 // CircuitBreakerConfig holds circuit breaker tunables.
@@ -194,7 +198,10 @@ func (c *Client) SetLogger(l Logger) {
 // HTTP 400 (bad request) is never retried or fallen back. It indicates a
 // problem with the request itself, not the provider.
 func (c *Client) Complete(ctx context.Context, req *Request) (*Response, error) {
-	r := *req // Copy the request so the caller's value is never mutated.
+	if req == nil {
+		return nil, fmt.Errorf("request required")
+	}
+	base := CloneRequest(req)
 
 	var lastErr error
 	for _, modelStr := range c.modelChain() {
@@ -210,7 +217,12 @@ func (c *Client) Complete(ctx context.Context, req *Request) (*Response, error) 
 			continue
 		}
 
+		r := CloneRequest(&base)
 		r.Model = modelName
+		if err := c.applyRequestPolicy(ctx, providerName, modelName, &r); err != nil {
+			c.Stats.RecordRequest(false, 0, 0, 0, 0)
+			return nil, err
+		}
 		resp, err := p.Complete(ctx, &r)
 		if err == nil {
 			c.Stats.RecordRequest(true, resp.InputTokens, resp.OutputTokens,
@@ -232,7 +244,10 @@ func (c *Client) Complete(ctx context.Context, req *Request) (*Response, error) 
 // to Complete. Stats are recorded when the returned channel is fully consumed
 // (closed or done chunk received).
 func (c *Client) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
-	r := *req
+	if req == nil {
+		return nil, fmt.Errorf("request required")
+	}
+	base := CloneRequest(req)
 
 	var lastErr error
 	for _, modelStr := range c.modelChain() {
@@ -248,7 +263,12 @@ func (c *Client) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk,
 			continue
 		}
 
+		r := CloneRequest(&base)
 		r.Model = modelName
+		if err := c.applyRequestPolicy(ctx, providerName, modelName, &r); err != nil {
+			c.Stats.RecordRequest(false, 0, 0, 0, 0)
+			return nil, err
+		}
 		ch, err := p.Stream(ctx, &r)
 		if err == nil {
 			return c.wrapStream(ctx, ch), nil
@@ -267,6 +287,9 @@ func (c *Client) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk,
 // Embed generates vector embeddings. Fallback semantics are identical to
 // Complete.
 func (c *Client) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("embed request required")
+	}
 	r := *req
 
 	var lastErr error
@@ -296,6 +319,16 @@ func (c *Client) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, 
 	}
 
 	return nil, fmt.Errorf("all providers failed for embedding: %w", lastErr)
+}
+
+func (c *Client) applyRequestPolicy(ctx context.Context, providerName, modelName string, req *Request) error {
+	if !c.config.RequestPolicy.Enabled() {
+		return nil
+	}
+	if _, err := c.config.RequestPolicy.ApplyContext(ctx, providerName, modelName, req); err != nil {
+		return fmt.Errorf("request policy failed for %s/%s: %w", providerName, modelName, err)
+	}
+	return nil
 }
 
 // Health calls Health on every configured provider and returns a map of
@@ -464,15 +497,4 @@ func setDefaults(cfg *Config) {
 	if cfg.CircuitBreaker.MaxFailures > 0 && cfg.CircuitBreaker.ResetTimeout == 0 {
 		cfg.CircuitBreaker.ResetTimeout = 60
 	}
-}
-
-func cloneStringMap(src map[string]string) map[string]string {
-	if len(src) == 0 {
-		return nil
-	}
-	dst := make(map[string]string, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
 }

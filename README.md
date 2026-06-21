@@ -23,6 +23,7 @@
 | **MCP client**              | Connects to any MCP server via stdio or Streamable HTTP (spec 2025-11-25)                                                                |
 | **Prompt caching**          | Anthropic block/request caching, OpenAI request hints, Gemini explicit caches; `CacheUsage` in response                                  |
 | **Streaming**               | SSE / NDJSON streaming for all five providers, including tool-call assembly and reasoning deltas                              |
+| **Gateway governance**      | Optional request policy, prompt-cache key injection, cache-breaker rewrites, safe snapshots, stream aggregation, and cost estimates       |
 | **Multimodal**              | Text, images (URL / base64), audio, PDF documents                                                                                        |
 | **Embeddings**              | OpenAI, Gemini, Ollama, Cohere                                                                                                           |
 | **Structured outputs**      | JSON object / JSON Schema response formats mapped across OpenAI, Gemini, Ollama, and Cohere                                  |
@@ -111,6 +112,7 @@ func main() {
 | `rateLimit`                   | int      | `0`     | Max requests per second per provider (0 = disabled)        |
 | `circuitBreaker.maxFailures`  | int      | `0`     | Consecutive failures before opening circuit (0 = disabled) |
 | `circuitBreaker.resetTimeout` | int      | `60`    | Seconds before half-open probe after circuit opens         |
+| `requestPolicy`               | object   | zero    | Optional gateway request validation, defaults, cache hints, rewrites, and snapshots |
 
 ### Provider fields
 
@@ -159,6 +161,28 @@ client, err := deebus.NewClient(deebus.Config{
 
 OpenAI can use the Responses API by setting `apiMode: responses` on the provider config; OpenAI-compatible gateways can keep the default Chat Completions mode.
 
+### Gateway governance
+
+`RequestPolicy` is an optional layer for AI gateways that need controls before
+provider dispatch. It can reject oversized requests, fill defaults such as
+`Store=false`, derive OpenAI `prompt_cache_key` values from tenant/client/model
+scope, normalize known cache-busting markers such as Anthropic billing-header
+`cch=...`, and return a prompt-safe `RequestSnapshot`.
+
+`Client.Complete` and `Client.Stream` apply `Config.RequestPolicy` before each
+provider attempt. Fallback attempts are prepared from a fresh deep clone, so
+provider-specific policy changes do not leak across attempts or mutate the
+caller-owned `Request`. Set `RequestPolicy.Reporter` to receive success and
+rejection reports for application audit records; set `FailOnReporterError` only
+when an audit sink outage must block provider calls.
+
+For stream observability and billing, use `CollectStream` / `StreamAccumulator`
+and pass provider-reported usage into `EstimateResponseCost`,
+`EstimateStreamCost`, or `EstimateEmbeddingCost`. Pricing is caller-supplied;
+the library deliberately does not ship hard-coded model prices.
+
+See [docs/gateway.md](docs/gateway.md) for the full gateway-oriented API.
+
 ### Optional YAML loading
 
 If your application already stores settings in YAML, `LoadConfig` can read a
@@ -185,6 +209,26 @@ rateLimit: 10 # max requests/second per provider (0 = disabled)
 circuitBreaker:
   maxFailures: 5 # consecutive failures that open the circuit (0 = disabled)
   resetTimeout: 60 # seconds before a half-open probe
+requestPolicy:
+  limits:
+    maxMessages: 64
+    maxTextBytes: 262144
+    maxTools: 64
+    maxToolSchemaBytes: 131072
+  defaults:
+    store: false
+  promptCache:
+    enabled: true
+    scope: ncobase
+    client: console
+    includeProvider: true
+    includeModel: true
+    metadataKeys: [space_id, action]
+    retention: 24h
+  cacheBreaker:
+    enabled: true
+    anthropicBillingHeaderCCH: true
+    replacement: stable
 ```
 
 ```go
@@ -717,6 +761,8 @@ Both helpers walk the error chain, so they work correctly with wrapped errors.
 - `client.go`: `Client`, `Config`, `LoadConfig`, `NewClient`, `Health`
 - `agent.go`: `RunAgent`, `RunAgentStream`, `AgentConfig`, `AgentEvent`
 - `cache.go`: explicit cache resource management on `Client`
+- `request_policy.go`, `request_limits.go`, `request_snapshot.go`, `request_clone.go`: optional gateway request governance, safe snapshots, and mutation-safe request cloning
+- `stream_result.go`, `cost.go`: stream aggregation and caller-priced cost estimation
 - `types.go`: type aliases re-exported from `providers`
 - `errors.go`: `IsRetryable`, `IsFallback`
 - `logger.go`: `Logger`, `NoopLogger`, `sharedLogger`
