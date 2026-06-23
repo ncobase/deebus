@@ -204,7 +204,7 @@ fallbacks:
   - openai/gpt-4o
 
 timeout: 30 # seconds per request
-retry: 2 # additional attempts on transient errors (429, 5xx, network)
+retry: 2 # additional attempts on transient errors (429, 5xx, network); set to 0 to disable
 rateLimit: 10 # max requests/second per provider (0 = disabled)
 circuitBreaker:
   maxFailures: 5 # consecutive failures that open the circuit (0 = disabled)
@@ -560,6 +560,9 @@ Every provider is wrapped with the following middleware layers, constructed auto
 | Network failure      |                         Yes |                           Yes |
 
 Auth errors (401/403) and bad requests (400) do **not** count as failures toward the circuit breaker.
+
+When constructing `Config` in Go, omit `Retry` to use the default of `2`. Set
+`RetryConfigured: true` with `Retry: 0` when retry must be disabled explicitly.
 
 ---
 

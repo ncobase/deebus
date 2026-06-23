@@ -35,6 +35,11 @@ type Config struct {
 	// transient errors (429, 5xx, network). Default: 2.
 	Retry int `yaml:"retry"`
 
+	// RetryConfigured preserves an explicit Retry value, including zero.
+	// Leave false when constructing Config manually to use the default retry
+	// count. LoadConfig sets this automatically when the YAML contains retry.
+	RetryConfigured bool `yaml:"-"`
+
 	// RateLimit caps outgoing requests per second per provider.
 	// 0 disables rate limiting.
 	RateLimit int `yaml:"rateLimit"`
@@ -73,10 +78,31 @@ type ProviderConfig struct {
 	CredentialProvider CredentialProvider `yaml:"-"`
 }
 
+// UnmarshalYAML records whether retry was explicitly set so retry: 0 disables
+// retry instead of being treated as an omitted default.
+func (c *Config) UnmarshalYAML(value *yaml.Node) error {
+	type rawConfig Config
+	var decoded rawConfig
+	if err := value.Decode(&decoded); err != nil {
+		return err
+	}
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		if value.Content[i].Value == "retry" {
+			decoded.RetryConfigured = true
+			break
+		}
+	}
+	*c = Config(decoded)
+	return nil
+}
+
 // Validate returns an error if the configuration is incomplete or invalid.
 func (c *Config) Validate() error {
 	if c.Primary == "" {
 		return fmt.Errorf("primary model required")
+	}
+	if c.Retry < 0 {
+		return fmt.Errorf("retry must be non-negative")
 	}
 	if len(c.Providers) == 0 {
 		return fmt.Errorf("at least one provider required")
@@ -491,7 +517,7 @@ func setDefaults(cfg *Config) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30
 	}
-	if cfg.Retry == 0 {
+	if cfg.Retry == 0 && !cfg.RetryConfigured {
 		cfg.Retry = 2
 	}
 	if cfg.CircuitBreaker.MaxFailures > 0 && cfg.CircuitBreaker.ResetTimeout == 0 {

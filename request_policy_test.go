@@ -222,7 +222,8 @@ func TestClientRequestPolicyAppliesBeforeProviderWithoutMutatingCaller(t *testin
 		Providers: map[string]ProviderConfig{
 			"openai": {Type: "openai", APIKey: "sk-test", BaseURL: srv.URL},
 		},
-		Retry: 0,
+		Retry:           0,
+		RetryConfigured: true,
 		RequestPolicy: RequestPolicy{
 			Defaults: RequestDefaults{Store: &store},
 			PromptCache: PromptCachePolicy{

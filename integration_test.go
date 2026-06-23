@@ -92,9 +92,10 @@ func newIntegrationClient(t *testing.T, name, typ, baseURL, apiKey, primary stri
 		Providers: map[string]ProviderConfig{
 			name: {Type: typ, APIKey: apiKey, BaseURL: baseURL},
 		},
-		Primary: primary,
-		Retry:   0,
-		Timeout: 60,
+		Primary:         primary,
+		Retry:           0,
+		RetryConfigured: true,
+		Timeout:         60,
 	})
 	if err != nil {
 		t.Fatalf("newIntegrationClient(%s): %v", name, err)
@@ -842,10 +843,11 @@ func TestIntegrationMultiProvider(t *testing.T) {
 				BaseURL: creds.OpenAIBaseURL,
 			},
 		},
-		Primary:   "anthropic/claude-sonnet-4-6",
-		Fallbacks: []string{"openai/gpt-5.4"},
-		Retry:     0,
-		Timeout:   60,
+		Primary:         "anthropic/claude-sonnet-4-6",
+		Fallbacks:       []string{"openai/gpt-5.4"},
+		Retry:           0,
+		RetryConfigured: true,
+		Timeout:         60,
 	})
 	if err != nil {
 		t.Fatalf("NewClient (multi-provider): %v", err)

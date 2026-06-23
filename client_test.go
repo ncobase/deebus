@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -147,6 +149,49 @@ func TestNewClientDefaults(t *testing.T) {
 	}
 }
 
+func TestNewClientExplicitZeroRetry(t *testing.T) {
+	c, err := NewClient(Config{
+		Primary: "openai/gpt-4o",
+		Providers: map[string]ProviderConfig{
+			"openai": {Type: "openai", APIKey: "sk-test", BaseURL: "https://api.openai.com"},
+		},
+		Retry:           0,
+		RetryConfigured: true,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+	if c.config.Retry != 0 {
+		t.Fatalf("explicit zero retry = %d, want 0", c.config.Retry)
+	}
+}
+
+func TestLoadConfigExplicitZeroRetry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deebus.yaml")
+	err := os.WriteFile(path, []byte(`
+providers:
+  openai:
+    type: openai
+    apiKey: sk-test
+    baseURL: https://api.openai.com
+primary: openai/gpt-4o
+retry: 0
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	c, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig() error: %v", err)
+	}
+	if c.config.Retry != 0 {
+		t.Fatalf("yaml retry = %d, want 0", c.config.Retry)
+	}
+	if !c.config.RetryConfigured {
+		t.Fatal("RetryConfigured was not preserved from yaml")
+	}
+}
+
 func TestNewClientCircuitBreakerDefault(t *testing.T) {
 	cfg := Config{
 		Primary: "openai/gpt-4o",
@@ -203,7 +248,8 @@ func TestStatsRecording(t *testing.T) {
 		Providers: map[string]ProviderConfig{
 			"openai": {Type: "openai", APIKey: "sk-test", BaseURL: "https://api.openai.com"},
 		},
-		Retry: 0, // disable retry so we get a fast failure
+		Retry:           0, // disable retry so we get a fast failure
+		RetryConfigured: true,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
@@ -222,7 +268,8 @@ func TestClientConcurrency(t *testing.T) {
 		Providers: map[string]ProviderConfig{
 			"openai": {Type: "openai", APIKey: "sk-test", BaseURL: "https://api.openai.com"},
 		},
-		Retry: 0,
+		Retry:           0,
+		RetryConfigured: true,
 	})
 	if err != nil {
 		t.Fatalf("NewClient() error: %v", err)
@@ -335,7 +382,8 @@ func TestStreamStatsRecordedOnFailure(t *testing.T) {
 		Providers: map[string]ProviderConfig{
 			"openai": {Type: "openai", APIKey: "sk-test", BaseURL: "https://api.openai.com"},
 		},
-		Retry: 0,
+		Retry:           0,
+		RetryConfigured: true,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
@@ -401,7 +449,8 @@ func TestClientCacheManagementGemini(t *testing.T) {
 		Providers: map[string]ProviderConfig{
 			"gemini": {Type: "gemini", APIKey: "sk-test", BaseURL: srv.URL},
 		},
-		Retry: 0,
+		Retry:           0,
+		RetryConfigured: true,
 	})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
