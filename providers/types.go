@@ -289,9 +289,11 @@ type StreamChunk struct {
 
 // EmbedRequest is the unified embedding request.
 type EmbedRequest struct {
-	Input     []string
-	Model     string
-	InputType string // hint for retrieval: "search_query", "search_document", "classification", "clustering"
+	Input          []string
+	Model          string
+	InputType      string // hint for retrieval: "search_query", "search_document", "classification", "clustering"
+	EncodingFormat string // OpenAI-compatible response vector format, currently "float" when set
+	UserID         string // provider-compatible end-user identifier when supported by the upstream
 }
 
 // EmbedResponse is the unified embedding response.

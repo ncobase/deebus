@@ -488,6 +488,12 @@ func (p *OpenAIProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 		"model": req.Model,
 		"input": req.Input,
 	}
+	if req.EncodingFormat != "" {
+		body["encoding_format"] = req.EncodingFormat
+	}
+	if req.UserID != "" {
+		body["user"] = req.UserID
+	}
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
