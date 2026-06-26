@@ -52,7 +52,7 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 	if len(req.Tools) > 0 {
 		body["tools"] = req.Tools
 		if req.ToolChoice != "" {
-			body["tool_choice"] = req.ToolChoice
+			body["tool_choice"] = openAIToolChoice(req.ToolChoice)
 		}
 	}
 	if req.UserID != "" {
@@ -228,7 +228,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 	if len(req.Tools) > 0 {
 		body["tools"] = req.Tools
 		if req.ToolChoice != "" {
-			body["tool_choice"] = req.ToolChoice
+			body["tool_choice"] = openAIToolChoice(req.ToolChoice)
 		}
 	}
 	if req.UserID != "" {
@@ -729,7 +729,7 @@ func (p *OpenAIProvider) responsesBody(req *Request, stream bool) map[string]any
 	if len(req.Tools) > 0 {
 		body["tools"] = req.Tools
 		if req.ToolChoice != "" {
-			body["tool_choice"] = req.ToolChoice
+			body["tool_choice"] = openAIResponsesToolChoice(req.ToolChoice)
 		}
 	}
 	if text := openAIResponsesText(req.ResponseFormat); text != nil {
@@ -904,6 +904,9 @@ func (p *OpenAIProvider) parseResponsesSSE(ctx context.Context, r io.Reader) <-c
 				resp, err := p.parseResponsesResult(&Request{}, event.Response)
 				if err == nil {
 					final = &StreamChunk{Done: true, FinishReason: resp.FinishReason, InputTokens: resp.InputTokens, OutputTokens: resp.OutputTokens, TokensUsed: resp.TokensUsed, ReasoningTokens: resp.ReasoningTokens, CacheUsage: resp.CacheUsage, Raw: event.Response}
+					if len(tools) == 0 {
+						final.ToolCalls = resp.ToolCalls
+					}
 				}
 			}
 		}

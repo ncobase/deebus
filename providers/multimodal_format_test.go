@@ -73,6 +73,25 @@ func TestOpenAIResponsesInputUsesResponsesContentTypes(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponsesInputUsesOutputTextForAssistantHistory(t *testing.T) {
+	input := ConvertToOpenAIResponsesInput([]Message{
+		TextMessage("assistant", "prior answer"),
+		TextMessage("user", "next question"),
+	})
+	if len(input) != 2 {
+		t.Fatalf("input = %#v", input)
+	}
+	assistant := input[0]
+	assistantContent := assistant["content"].([]map[string]any)
+	if assistant["role"] != "assistant" || assistantContent[0]["type"] != "output_text" {
+		t.Fatalf("assistant history content = %#v", assistant)
+	}
+	userContent := input[1]["content"].([]map[string]any)
+	if input[1]["role"] != "user" || userContent[0]["type"] != "input_text" {
+		t.Fatalf("user content = %#v", input[1])
+	}
+}
+
 func TestAnthropicFormatPreservesDocumentURL(t *testing.T) {
 	messages := ConvertToAnthropicFormat([]Message{
 		{

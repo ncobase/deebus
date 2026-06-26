@@ -90,6 +90,34 @@ func openAIResponsesText(format *ResponseFormat) any {
 	return map[string]any{"format": map[string]any{"type": format.Type}}
 }
 
+func openAIToolChoice(choice string) any {
+	choice = strings.TrimSpace(choice)
+	switch choice {
+	case "", "auto", "none", "required":
+		return choice
+	default:
+		return map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name": choice,
+			},
+		}
+	}
+}
+
+func openAIResponsesToolChoice(choice string) any {
+	choice = strings.TrimSpace(choice)
+	switch choice {
+	case "", "auto", "none", "required":
+		return choice
+	default:
+		return map[string]any{
+			"type": "function",
+			"name": choice,
+		}
+	}
+}
+
 func geminiResponseFormat(format *ResponseFormat) map[string]any {
 	if format == nil || format.Type == "" || format.Type == "text" {
 		return nil

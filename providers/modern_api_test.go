@@ -9,6 +9,26 @@ import (
 	"time"
 )
 
+func TestOpenAIToolChoiceSerializesSpecificFunctionByAPIMode(t *testing.T) {
+	chatChoice, ok := openAIToolChoice("lookup_account").(map[string]any)
+	if !ok || chatChoice["type"] != "function" {
+		t.Fatalf("chat tool_choice = %#v", chatChoice)
+	}
+	chatFunction, ok := chatChoice["function"].(map[string]any)
+	if !ok || chatFunction["name"] != "lookup_account" {
+		t.Fatalf("chat function tool_choice = %#v", chatChoice)
+	}
+
+	responsesChoice, ok := openAIResponsesToolChoice("lookup_account").(map[string]any)
+	if !ok || responsesChoice["type"] != "function" || responsesChoice["name"] != "lookup_account" {
+		t.Fatalf("Responses tool_choice = %#v", responsesChoice)
+	}
+
+	if openAIToolChoice("auto") != "auto" || openAIResponsesToolChoice("required") != "required" {
+		t.Fatalf("built-in tool_choice values must remain strings")
+	}
+}
+
 func TestOpenAIResponsesCompleteMapsModernFields(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/responses" {

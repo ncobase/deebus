@@ -345,7 +345,11 @@ func openAIResponsesMessage(msg Message) map[string]any {
 	for _, block := range msg.Content {
 		switch b := block.(type) {
 		case TextContent:
-			parts = append(parts, map[string]any{"type": "input_text", "text": b.Text})
+			contentType := "input_text"
+			if msg.Role == "assistant" || b.Type == "output_text" {
+				contentType = "output_text"
+			}
+			parts = append(parts, map[string]any{"type": contentType, "text": b.Text})
 		case ImageContent:
 			item := map[string]any{"type": "input_image"}
 			if b.Detail != "" {
