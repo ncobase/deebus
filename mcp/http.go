@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,7 +16,12 @@ import (
 	"time"
 )
 
-// httpTransport implements the MCP Streamable HTTP transport (spec 2025-03-26).
+const (
+	maxMCPBody      = 32 << 20
+	maxMCPErrorBody = 64 << 10
+)
+
+// httpTransport implements the MCP Streamable HTTP transport (spec 2025-11-25).
 //
 // Each JSON-RPC call is a separate HTTP POST to the server endpoint. The server
 // may respond with:
@@ -37,9 +44,27 @@ func newHTTPTransport(endpoint string, timeout time.Duration) *httpTransport {
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
+	base, _ := http.DefaultTransport.(*http.Transport)
+	var transport *http.Transport
+	if base != nil {
+		transport = base.Clone()
+	} else {
+		transport = &http.Transport{}
+	}
+	transport.ForceAttemptHTTP2 = true
+	transport.TLSClientConfig = &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		NextProtos: []string{"h2", "http/1.1"},
+	}
 	return &httpTransport{
 		endpoint: endpoint,
-		client:   &http.Client{Timeout: timeout},
+		client: &http.Client{
+			Timeout:   timeout,
+			Transport: transport,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return errors.New("mcp redirects are not followed")
+			},
+		},
 	}
 }
 
@@ -66,6 +91,7 @@ func (t *httpTransport) call(ctx context.Context, method string, params any) (js
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("User-Agent", "deebus-mcp")
 	if sid, _ := t.sessionID.Load().(string); sid != "" {
 		req.Header.Set("Mcp-Session-Id", sid)
 	}
@@ -76,8 +102,8 @@ func (t *httpTransport) call(ctx context.Context, method string, params any) (js
 	}
 	defer resp.Body.Close()
 
-	// Store session ID returned by server.
-	if sid := resp.Header.Get("Mcp-Session-Id"); sid != "" {
+	// Store session ID returned by server. Reject values that could inject headers.
+	if sid := resp.Header.Get("Mcp-Session-Id"); validSessionID(sid) {
 		t.sessionID.Store(sid)
 	}
 
@@ -85,7 +111,7 @@ func (t *httpTransport) call(ctx context.Context, method string, params any) (js
 		return nil, fmt.Errorf("mcp http: session expired (404), re-initialize")
 	}
 	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxMCPErrorBody))
 		return nil, fmt.Errorf("mcp http: server error %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 
@@ -96,7 +122,7 @@ func (t *httpTransport) call(ctx context.Context, method string, params any) (js
 
 	// JSON response.
 	var msg rpcMessage
-	if err := json.NewDecoder(resp.Body).Decode(&msg); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxMCPBody)).Decode(&msg); err != nil {
 		return nil, fmt.Errorf("mcp http: decode response: %w", err)
 	}
 	if msg.Error != nil {
@@ -185,6 +211,7 @@ func (t *httpTransport) notify(method string, params any) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("User-Agent", "deebus-mcp")
 	if sid, _ := t.sessionID.Load().(string); sid != "" {
 		req.Header.Set("Mcp-Session-Id", sid)
 	}
@@ -195,6 +222,18 @@ func (t *httpTransport) notify(method string, params any) error {
 	}
 	resp.Body.Close()
 	return nil
+}
+
+func validSessionID(sid string) bool {
+	if sid == "" || len(sid) > 256 {
+		return false
+	}
+	for _, r := range sid {
+		if r < 0x21 || r > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func (t *httpTransport) setNotificationHandler(h func(rpcMessage)) {
@@ -213,7 +252,11 @@ func (t *httpTransport) close() error {
 	if err != nil {
 		return err
 	}
+	if !validSessionID(sid) {
+		return nil
+	}
 	req.Header.Set("Mcp-Session-Id", sid)
+	req.Header.Set("User-Agent", "deebus-mcp")
 	resp, err := t.client.Do(req)
 	if err != nil {
 		return err

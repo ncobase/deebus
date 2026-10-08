@@ -3,6 +3,7 @@ package deebus
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -56,7 +57,7 @@ type Config struct {
 // CircuitBreakerConfig holds circuit breaker tunables.
 type CircuitBreakerConfig struct {
 	// MaxFailures is the consecutive-failure count that opens the circuit.
-	// Default: 5.  0 = disabled.
+	// 0 disables the circuit breaker. There is no implicit default of 5.
 	MaxFailures int `yaml:"maxFailures"`
 
 	// ResetTimeout is seconds to wait before allowing a probe (half-open).
@@ -101,8 +102,20 @@ func (c *Config) Validate() error {
 	if c.Primary == "" {
 		return fmt.Errorf("primary model required")
 	}
+	if c.Timeout < 0 {
+		return fmt.Errorf("timeout must be non-negative")
+	}
 	if c.Retry < 0 {
 		return fmt.Errorf("retry must be non-negative")
+	}
+	if c.RateLimit < 0 {
+		return fmt.Errorf("rateLimit must be non-negative")
+	}
+	if c.CircuitBreaker.MaxFailures < 0 {
+		return fmt.Errorf("circuitBreaker.maxFailures must be non-negative")
+	}
+	if c.CircuitBreaker.ResetTimeout < 0 {
+		return fmt.Errorf("circuitBreaker.resetTimeout must be non-negative")
 	}
 	if len(c.Providers) == 0 {
 		return fmt.Errorf("at least one provider required")
@@ -111,11 +124,23 @@ func (c *Config) Validate() error {
 		if cfg.Type == "" {
 			return fmt.Errorf("provider %q: type required", name)
 		}
+		if err := validateProviderAPIMode(name, cfg); err != nil {
+			return err
+		}
 		if cfg.BaseURL == "" {
 			return fmt.Errorf("provider %q: baseURL required", name)
 		}
 		if !isAllowedURL(cfg.BaseURL) {
-			return fmt.Errorf("provider %q: baseURL must use https or localhost/127.0.0.1", name)
+			return fmt.Errorf("provider %q: baseURL must use https, or http on localhost, 127.0.0.1, ::1, or 0.0.0.0", name)
+		}
+		if err := providers.ValidateHeaderSafety(cfg.Headers, map[string]string{
+			"apiKey":       cfg.APIKey,
+			"bearerToken":  cfg.BearerToken,
+			"organization": cfg.Organization,
+			"project":      cfg.Project,
+			"userProject":  cfg.UserProject,
+		}); err != nil {
+			return fmt.Errorf("provider %q: %w", name, err)
 		}
 		// Ollama is a local service and does not require authentication.
 		if cfg.Type != "ollama" &&
@@ -126,24 +151,68 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("provider %q: apiKey, bearerToken, credentialProvider, or headers required", name)
 		}
 	}
-	// Validate that every model in the fallback chain references a configured provider.
+	if err := c.validateModelRef("primary", c.Primary); err != nil {
+		return err
+	}
 	for _, fb := range c.Fallbacks {
-		providerName, _, err := parseModel(fb)
-		if err != nil {
-			return fmt.Errorf("fallback %q: %w", fb, err)
-		}
-		if _, ok := c.Providers[providerName]; !ok {
-			return fmt.Errorf("fallback %q: provider %q not configured", fb, providerName)
+		if err := c.validateModelRef("fallback", fb); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func isAllowedURL(u string) bool {
-	return strings.HasPrefix(u, "https://") ||
-		strings.HasPrefix(u, "http://localhost") ||
-		strings.HasPrefix(u, "http://127.0.0.1") ||
-		strings.HasPrefix(u, "http://0.0.0.0") // Docker / container environments
+func (c *Config) validateModelRef(kind, ref string) error {
+	providerName, _, err := parseModel(ref)
+	if err != nil {
+		return fmt.Errorf("%s %q: %w", kind, ref, err)
+	}
+	if _, ok := c.Providers[providerName]; !ok {
+		return fmt.Errorf("%s %q: provider %q not configured", kind, ref, providerName)
+	}
+	return nil
+}
+
+func validateProviderAPIMode(name string, cfg ProviderConfig) error {
+	mode := strings.ToLower(strings.TrimSpace(cfg.APIMode))
+	if mode == "" {
+		return nil
+	}
+	if cfg.Type != "openai" {
+		return fmt.Errorf("provider %q: apiMode is supported only for openai", name)
+	}
+	switch mode {
+	case "chat_completions", "responses":
+		return nil
+	default:
+		return fmt.Errorf("provider %q: apiMode must be chat_completions or responses", name)
+	}
+}
+
+// isAllowedURL accepts HTTPS endpoints and plaintext HTTP only for exact
+// loopback hosts. Prefix checks are intentionally not used: "http://localhost.evil.com"
+// and "http://127.0.0.1@evil.com" must be rejected.
+func isAllowedURL(raw string) bool {
+	if strings.ContainsAny(raw, "\r\n\t") {
+		return false
+	}
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Hostname() == "" || u.User != nil || u.Opaque != "" {
+		return false
+	}
+	switch u.Scheme {
+	case "https":
+		return true
+	case "http":
+		switch strings.ToLower(u.Hostname()) {
+		case "localhost", "127.0.0.1", "0.0.0.0", "::1":
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
 }
 
 // Client dispatches AI requests across a pool of providers with automatic
@@ -316,7 +385,10 @@ func (c *Client) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, 
 	if req == nil {
 		return nil, fmt.Errorf("embed request required")
 	}
-	r := *req
+	if err := c.config.RequestPolicy.Limits.ValidateEmbed(req); err != nil {
+		c.Stats.RecordRequest(false, 0, 0, 0, 0)
+		return nil, fmt.Errorf("request policy failed: %w", err)
+	}
 
 	var lastErr error
 	for _, modelStr := range c.modelChain() {
@@ -332,9 +404,11 @@ func (c *Client) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, 
 			continue
 		}
 
-		r.Model = modelName
-		resp, err := p.Embed(ctx, &r)
+		attempt := *req
+		attempt.Model = modelName
+		resp, err := p.Embed(ctx, &attempt)
 		if err == nil {
+			c.Stats.RecordRequest(true, resp.TokensUsed, 0, 0, 0)
 			return resp, nil
 		}
 
@@ -344,6 +418,7 @@ func (c *Client) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, 
 		}
 	}
 
+	c.Stats.RecordRequest(false, 0, 0, 0, 0)
 	return nil, fmt.Errorf("all providers failed for embedding: %w", lastErr)
 }
 
@@ -363,12 +438,28 @@ func (c *Client) applyRequestPolicy(ctx context.Context, providerName, modelName
 // other providers from being checked.
 func (c *Client) Health(ctx context.Context) map[string]error {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	results := make(map[string]error, len(c.providers))
+	names := make([]string, 0, len(c.providers))
+	provs := make([]providers.Provider, 0, len(c.providers))
 	for name, p := range c.providers {
-		results[name] = p.Health(ctx)
+		names = append(names, name)
+		provs = append(provs, p)
 	}
+	c.mu.RUnlock()
+
+	results := make(map[string]error, len(names))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for i := range names {
+		wg.Add(1)
+		go func(name string, p providers.Provider) {
+			defer wg.Done()
+			err := p.Health(ctx)
+			mu.Lock()
+			results[name] = err
+			mu.Unlock()
+		}(names[i], provs[i])
+	}
+	wg.Wait()
 	return results
 }
 

@@ -1,12 +1,10 @@
 package providers
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -23,7 +21,7 @@ func NewOllama(cfg Config) *OllamaProvider {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 120 * time.Second // local models can be slow to load
 	}
-	return &OllamaProvider{cfg: cfg, client: &http.Client{Timeout: cfg.Timeout}}
+	return &OllamaProvider{cfg: cfg, client: newHTTPClient(cfg.Timeout)}
 }
 
 func (p *OllamaProvider) Name() string { return "ollama" }
@@ -124,7 +122,7 @@ func (p *OllamaProvider) Complete(ctx context.Context, req *Request) (*Response,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 
@@ -241,7 +239,7 @@ func (p *OllamaProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		resp.Body.Close()
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
@@ -251,7 +249,7 @@ func (p *OllamaProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		defer close(ch)
 		defer resp.Body.Close()
 
-		scanner := bufio.NewScanner(resp.Body)
+		scanner := newStreamScanner(resp.Body)
 		for scanner.Scan() {
 			var event struct {
 				Message struct {
@@ -352,7 +350,7 @@ func (p *OllamaProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 

@@ -4,7 +4,7 @@
 //
 // Supported transports:
 // - stdio   - launches a local subprocess (most common for CLI tools)
-// - HTTP    - connects to a remote server via Streamable HTTP (spec 2025-03-26)
+// - HTTP    - connects to a remote server via Streamable HTTP (spec 2025-11-25)
 //
 // Quick start:
 //

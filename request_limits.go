@@ -62,6 +62,28 @@ func (l RequestLimits) Validate(req *Request) error {
 	return nil
 }
 
+// ValidateEmbed applies the text-size guard to embedding inputs.
+// Other limits apply only to chat requests.
+func (l RequestLimits) ValidateEmbed(req *EmbedRequest) error {
+	if !l.Enabled() {
+		return nil
+	}
+	if req == nil {
+		return fmt.Errorf("request limits: embed request is nil")
+	}
+	if l.MaxTextBytes <= 0 {
+		return nil
+	}
+	total := 0
+	for _, input := range req.Input {
+		total += len(input)
+	}
+	if total > l.MaxTextBytes {
+		return fmt.Errorf("request limits: embed text bytes=%d exceeds maxTextBytes=%d", total, l.MaxTextBytes)
+	}
+	return nil
+}
+
 // RequestPayloadBytes returns approximate text and inline-media payload sizes.
 // URL media contributes only URL length; base64 media contributes data length.
 func RequestPayloadBytes(req *Request) (textBytes, mediaBytes int) {

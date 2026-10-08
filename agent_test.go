@@ -130,6 +130,32 @@ func TestTrimHistoryNoSystem(t *testing.T) {
 	}
 }
 
+func TestTrimHistoryKeepsToolTurnTogether(t *testing.T) {
+	msgs := []providers.Message{
+		{Role: "system"},
+		{Role: "user"},
+		{Role: "assistant", ToolCalls: []providers.ToolCall{toolCall("1", "lookup", "{}")}},
+		{Role: "tool", ToolCallID: "1"},
+	}
+	got := trimHistory(msgs, 2)
+	if len(got) != 3 {
+		t.Fatalf("got %d messages, want system plus the newest tool turn", len(got))
+	}
+	if got[0].Role != "system" || got[1].Role != "assistant" || got[2].Role != "tool" {
+		t.Fatalf("roles = %s %s %s", got[0].Role, got[1].Role, got[2].Role)
+	}
+}
+
+func TestDispatchToolsPanic(t *testing.T) {
+	calls := []providers.ToolCall{toolCall("1", "boom", `{}`)}
+	_, err := dispatchTools(context.Background(), calls, func(context.Context, string, string) (string, error) {
+		panic("tool exploded")
+	}, AgentConfig{}, 1, func(AgentEvent) {})
+	if err == nil || !strings.Contains(err.Error(), "panic") {
+		t.Fatalf("expected panic error, got %v", err)
+	}
+}
+
 func TestDispatchToolsSequential(t *testing.T) {
 	calls := []providers.ToolCall{
 		toolCall("1", "add", `{"a":1,"b":2}`),
@@ -344,6 +370,30 @@ func TestRunAgentStreamNoTools(t *testing.T) {
 	}
 	if content.String() != "streaming answer" {
 		t.Errorf("content = %q", content.String())
+	}
+}
+
+func TestRunAgentNilRequest(t *testing.T) {
+	c := buildTestClient(t, &agentMockProvider{responses: []providers.Response{{Content: "x"}}})
+	if _, _, err := c.RunAgent(context.Background(), nil, nil); err == nil {
+		t.Fatal("expected error for nil request")
+	}
+	if _, err := c.RunAgentStream(context.Background(), nil, nil, nil); err == nil {
+		t.Fatal("expected error for nil stream request")
+	}
+}
+
+func TestRunAgentHookPanicDoesNotAbort(t *testing.T) {
+	mock := &agentMockProvider{responses: []providers.Response{{Content: "ok"}}}
+	c := buildTestClient(t, mock)
+	answer, _, err := c.RunAgent(context.Background(), &Request{
+		Messages: []Message{TextMessage("user", "hi")},
+	}, nil, AgentConfig{Hook: func(AgentEvent) { panic("hook") }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "ok" {
+		t.Fatalf("answer = %q", answer)
 	}
 }
 

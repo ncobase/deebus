@@ -1,12 +1,10 @@
 package providers
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -24,7 +22,7 @@ func NewGemini(cfg Config) *GeminiProvider {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
 	}
-	return &GeminiProvider{cfg: cfg, client: &http.Client{Timeout: cfg.Timeout}}
+	return &GeminiProvider{cfg: cfg, client: newHTTPClient(cfg.Timeout)}
 }
 
 func (p *GeminiProvider) Name() string { return "gemini" }
@@ -104,7 +102,7 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 
@@ -254,7 +252,7 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		resp.Body.Close()
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
@@ -266,7 +264,7 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 
 		var inputTokens, outputTokens, cacheRead, thoughts int
 
-		scanner := bufio.NewScanner(resp.Body)
+		scanner := newStreamScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
 			if !strings.HasPrefix(line, "data: ") {
@@ -404,7 +402,7 @@ func (p *GeminiProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 
@@ -534,11 +532,25 @@ func (p *GeminiProvider) geminiURL(creds Credentials, path, extraQuery string) (
 		return "", err
 	}
 	if strings.Contains(p.cfg.BaseURL, "googleapis.com") && creds.BearerToken == "" && creds.APIKey != "" {
-		q := "key=" + creds.APIKey
-		if extraQuery != "" {
-			q += "&" + extraQuery
+		u, err := url.Parse(base)
+		if err != nil {
+			return "", err
 		}
-		return base + "?" + q, nil
+		q := u.Query()
+		q.Set("key", creds.APIKey)
+		if extraQuery != "" {
+			extra, err := url.ParseQuery(extraQuery)
+			if err != nil {
+				return "", fmt.Errorf("invalid gemini query: %w", err)
+			}
+			for key, values := range extra {
+				for _, value := range values {
+					q.Add(key, value)
+				}
+			}
+		}
+		u.RawQuery = q.Encode()
+		return u.String(), nil
 	}
 	if extraQuery != "" {
 		return base + "?" + extraQuery, nil

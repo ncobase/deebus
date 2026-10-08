@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -24,7 +23,7 @@ func NewOpenAI(cfg Config) *OpenAIProvider {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
 	}
-	return &OpenAIProvider{cfg: cfg, client: &http.Client{Timeout: cfg.Timeout}}
+	return &OpenAIProvider{cfg: cfg, client: newHTTPClient(cfg.Timeout)}
 }
 
 func (p *OpenAIProvider) Name() string { return "openai" }
@@ -98,7 +97,7 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 
@@ -126,7 +125,7 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 		Model string `json:"model"`
 	}
 
-	rawBody, err := io.ReadAll(resp.Body)
+	rawBody, err := readResponseBody(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
@@ -273,7 +272,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		resp.Body.Close()
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
@@ -312,7 +311,7 @@ func (p *OpenAIProvider) parseSSEStream(ctx context.Context, r io.Reader) <-chan
 		// the usage chunk arrives (stream_options.include_usage = true).
 		var pending *StreamChunk
 
-		scanner := bufio.NewScanner(r)
+		scanner := newStreamScanner(r)
 		for scanner.Scan() {
 			line := scanner.Text()
 			if !strings.HasPrefix(line, "data: ") {
@@ -521,7 +520,7 @@ func (p *OpenAIProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 
@@ -661,10 +660,10 @@ func (p *OpenAIProvider) completeResponses(ctx context.Context, req *Request) (*
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
-	rawBody, err := io.ReadAll(resp.Body)
+	rawBody, err := readResponseBody(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
@@ -696,7 +695,7 @@ func (p *OpenAIProvider) streamResponses(ctx context.Context, req *Request) (<-c
 		return nil, networkError(p.Name(), err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		resp.Body.Close()
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
@@ -841,7 +840,7 @@ func (p *OpenAIProvider) parseResponsesSSE(ctx context.Context, r io.Reader) <-c
 		}
 		tools := map[int]*tcAccumulator{}
 		var final *StreamChunk
-		scanner := bufio.NewScanner(r)
+		scanner := newStreamScanner(r)
 		for scanner.Scan() {
 			line := scanner.Text()
 			if !strings.HasPrefix(line, "data: ") {

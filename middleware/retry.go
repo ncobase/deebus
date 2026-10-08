@@ -236,11 +236,19 @@ func (m *RetryMiddleware) DeleteCache(ctx context.Context, name string) error {
 	return lastErr
 }
 
+// maxRetryAfterWait matches providers.maxRetryAfter. A parsed Retry-After is
+// already capped, and this guard covers errors constructed by callers.
+const maxRetryAfterWait = 2 * time.Minute
+
 // backoff computes the wait duration for a given attempt number using equal
 // jitter: delay = cap/2 + random(0, cap/2), where cap = base * 2^attempt.
-// If the server provided a Retry-After hint, that takes precedence.
+// If the server provided a Retry-After hint, that takes precedence up to
+// maxRetryAfterWait.
 func (m *RetryMiddleware) backoff(attempt int, hint time.Duration) time.Duration {
 	if hint > 0 {
+		if hint > maxRetryAfterWait {
+			return maxRetryAfterWait
+		}
 		return hint
 	}
 	exp := float64(m.baseDelay) * math.Pow(2, float64(attempt))

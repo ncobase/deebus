@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sync"
@@ -16,6 +17,7 @@ import (
 // The subprocess's stderr is forwarded to os.Stderr so log output is visible.
 type stdioTransport struct {
 	cmd       *exec.Cmd
+	stdin     io.WriteCloser
 	conn      *conn
 	closeOnce sync.Once
 	closeErr  error
@@ -23,8 +25,10 @@ type stdioTransport struct {
 
 // newStdioTransport starts command with args and env overlaid on the current
 // environment, then returns a connected transport ready to use.
-func newStdioTransport(ctx context.Context, command string, args, env []string) (*stdioTransport, error) {
-	cmd := exec.CommandContext(ctx, command, args...)
+// The process lives until close. It is not tied to a caller's context, so a
+// handshake timeout does not kill a server that has already started.
+func newStdioTransport(command string, args, env []string) (*stdioTransport, error) {
+	cmd := exec.Command(command, args...)
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stderr = os.Stderr
 
@@ -34,14 +38,16 @@ func newStdioTransport(ctx context.Context, command string, args, env []string) 
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		stdin.Close()
 		return nil, fmt.Errorf("mcp stdio: stdout pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
+		stdin.Close()
 		return nil, fmt.Errorf("mcp stdio: start %q: %w", command, err)
 	}
 
-	t := &stdioTransport{cmd: cmd}
+	t := &stdioTransport{cmd: cmd, stdin: stdin}
 	t.conn = newConn(func(data []byte) error {
 		_, err := fmt.Fprintf(stdin, "%s\n", data)
 		return err
@@ -66,9 +72,10 @@ func (t *stdioTransport) setNotificationHandler(h func(rpcMessage)) {
 
 func (t *stdioTransport) close() error {
 	t.closeOnce.Do(func() {
-		// Close stdin to signal EOF to the subprocess, then wait for it to exit.
-		if pipe, ok := t.cmd.Stdin.(interface{ Close() error }); ok {
-			pipe.Close()
+		// Close the real stdin pipe. Cmd.Stdin stays nil when StdinPipe is used,
+		// so closing Cmd.Stdin would not deliver EOF.
+		if t.stdin != nil {
+			_ = t.stdin.Close()
 		}
 		t.closeErr = t.cmd.Wait()
 	})

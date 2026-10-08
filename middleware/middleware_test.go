@@ -787,6 +787,9 @@ func TestBackoffWithHint(t *testing.T) {
 	if got != hint {
 		t.Errorf("backoff with hint: got %v, want %v", got, hint)
 	}
+	if got := r.backoff(0, 24*time.Hour); got != maxRetryAfterWait {
+		t.Errorf("uncapped retry-after: got %v, want %v", got, maxRetryAfterWait)
+	}
 }
 
 func TestBackoffIncreasesWithAttempt(t *testing.T) {

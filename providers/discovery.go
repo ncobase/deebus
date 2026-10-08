@@ -45,16 +45,19 @@ func doProviderJSONRequest(
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		body, _ := io.ReadAll(resp.Body)
-		return parseError(resp.StatusCode, body, resp.Header, provider)
+		return parseError(resp.StatusCode, readErrorBody(resp.Body), resp.Header, provider)
 	}
 
 	if out == nil {
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxBufferedBody))
 		return nil
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	body, err := readResponseBody(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("decode response: %w", err)
 	}
 

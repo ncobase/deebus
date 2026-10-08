@@ -121,7 +121,7 @@ func main() {
 | `type`         | string | Yes      | One of `openai`, `anthropic`, `gemini`, `ollama`, `cohere`                                     |
 | `apiKey`       | string | Yes\*    | API key. Optional when `bearerToken`, `headers`, or `CredentialProvider` supplies credentials. |
 | `bearerToken`  | string | -        | Static bearer token for OAuth-style or proxy auth                                              |
-| `baseURL`      | string | Yes      | Must use `https://` or `http://localhost` / `http://127.0.0.1` / `http://0.0.0.0`              |
+| `baseURL`      | string | Yes      | `https://` anywhere, or `http://` only for the exact hosts `localhost`, `127.0.0.1`, `::1`, and `0.0.0.0` |
 | `apiMode`      | string | -        | OpenAI only: `chat_completions` default or `responses` for the modern Responses API            |
 | `headers`      | map    | -        | Extra static headers sent on every request                                                     |
 | `organization` | string | -        | OpenAI `OpenAI-Organization` header                                                            |
@@ -463,7 +463,7 @@ history := <-histCh // full conversation including all tool turns
 | `MaxIterations`      | int                | `10`    | Maximum model -> tool round-trips                                   |
 | `DisableParallel`    | bool               | `false` | When `false`, independent tool calls in one turn run concurrently   |
 | `Hook`               | `func(AgentEvent)` | `nil`   | Called synchronously on each observable action                      |
-| `MaxHistoryMessages` | int                | `0`     | Trim conversation to at most N messages, preserving system messages |
+| `MaxHistoryMessages` | int                | `0`     | Trim to at most N messages, keeping system messages and complete tool turns |
 
 ### AgentEvent types
 
@@ -480,7 +480,7 @@ history := <-histCh // full conversation including all tool turns
 
 ## MCP Client
 
-The `mcp` sub-package implements a client for the [Model Context Protocol](https://modelcontextprotocol.io/) (spec 2025-03-26), enabling agents to use tools exposed by any MCP-compatible server with zero additional dependencies.
+The `mcp` sub-package implements a client for the [Model Context Protocol](https://modelcontextprotocol.io/) (spec 2025-11-25), enabling agents to use tools exposed by any MCP-compatible server with zero additional dependencies.
 
 ### stdio transport (most common)
 
@@ -512,7 +512,7 @@ answer, _, err := deebusClient.RunAgent(ctx,
 fmt.Println(answer)
 ```
 
-### HTTP transport (Streamable HTTP, spec 2025-03-26)
+### HTTP transport (Streamable HTTP, spec 2025-11-25)
 
 ```go
 mcpClient, err := mcp.NewHTTPClient(ctx,
@@ -576,7 +576,33 @@ resp, err := client.Embed(ctx, &deebus.EmbedRequest{
 fmt.Printf("%d vectors of dim %d\n", len(resp.Embeddings), len(resp.Embeddings[0]))
 ```
 
-Supported by OpenAI, Gemini, Ollama, and Cohere.
+Supported by OpenAI, Gemini, Ollama, and Cohere. Successful and failed
+embedding calls are included in `Client.Stats`. Input tokens are recorded from
+`EmbedResponse.TokensUsed`. When `RequestPolicy.Limits.MaxTextBytes` is set,
+embedding inputs are rejected before any provider call.
+
+---
+
+## Model Catalog
+
+```go
+models, err := client.ListModels(ctx, "openai")
+```
+
+`ListModels` asks one configured provider for its current model identifiers.
+`Health` checks every configured provider concurrently and returns
+`map[string]error`.
+
+---
+
+## Security Boundaries
+
+- Provider HTTP clients do not follow redirects, require TLS 1.2 or newer for HTTPS, and cap buffered responses at 32 MiB. Stream lines are capped at 4 MiB.
+- Error text redacts API keys, bearer tokens, and `sk-` secrets before it is returned or logged.
+- `Retry-After` is honoured up to 2 minutes.
+- Header names and credential values that contain CR, LF, or NUL are rejected.
+- MCP stdio servers stay alive until `Close`. Cancelling the context passed to `NewStdioClient` does not kill a server that has already started. A failed handshake still stops the process.
+- MCP HTTP sessions ignore session IDs that are not visible ASCII, and tool-list pagination stops on a repeated cursor or after 64 pages.
 
 ---
 

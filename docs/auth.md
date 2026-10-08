@@ -74,4 +74,8 @@ The provider returns a `Credentials` value:
 Static config and runtime credentials are merged. Runtime values override static
 ones when both are present.
 
+Header names and credential values are rejected when they contain CR, LF, or
+NUL. Provider errors redact bearer tokens, `sk-` keys, and query secrets such
+as Gemini `key=` before those errors are returned to the caller.
+
 `CredentialProvider` is programmatic only. It is not loaded from YAML.

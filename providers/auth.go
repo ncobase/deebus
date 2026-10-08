@@ -31,16 +31,27 @@ func (c Config) credentials(ctx context.Context) (Credentials, error) {
 		Project:      c.Project,
 		UserProject:  c.UserProject,
 	}
-	if c.CredentialProvider == nil {
-		return creds, nil
+	if c.CredentialProvider != nil {
+		dynamic, err := c.CredentialProvider.Credentials(ctx)
+		if err != nil {
+			return Credentials{}, err
+		}
+		mergeCredentials(&creds, dynamic)
 	}
-
-	dynamic, err := c.CredentialProvider.Credentials(ctx)
-	if err != nil {
+	if err := validateCredentialHeaders(creds); err != nil {
 		return Credentials{}, err
 	}
-	mergeCredentials(&creds, dynamic)
 	return creds, nil
+}
+
+func validateCredentialHeaders(creds Credentials) error {
+	return ValidateHeaderSafety(creds.Headers, map[string]string{
+		"apiKey":       creds.APIKey,
+		"bearerToken":  creds.BearerToken,
+		"organization": creds.Organization,
+		"project":      creds.Project,
+		"userProject":  creds.UserProject,
+	})
 }
 
 func mergeCredentials(dst *Credentials, src Credentials) {

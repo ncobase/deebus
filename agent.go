@@ -68,8 +68,10 @@ type AgentConfig struct {
 	Hook func(AgentEvent)
 
 	// MaxHistoryMessages trims the conversation when it exceeds this many
-	// messages, preserving system messages and the most recent turns.
-	// 0 disables trimming.
+	// messages. System messages stay at the front, and assistant tool-call
+	// turns stay attached to their tool results. The newest turn is kept even
+	// when that turn alone is larger than the limit, so the next request
+	// remains valid. 0 disables trimming.
 	MaxHistoryMessages int
 }
 
@@ -84,14 +86,15 @@ func (c *Client) RunAgent(
 	toolFn AgentToolFunc,
 	opts ...AgentConfig,
 ) (string, []providers.Message, error) {
+	if req == nil {
+		return "", nil, fmt.Errorf("agent: request required")
+	}
 	cfg := applyAgentDefaults(opts)
 	msgs := make([]providers.Message, len(req.Messages))
 	copy(msgs, req.Messages)
 
 	emit := func(ev AgentEvent) {
-		if cfg.Hook != nil {
-			cfg.Hook(ev)
-		}
+		safeHook(cfg.Hook, ev)
 	}
 
 	for i := 0; i < cfg.MaxIterations; i++ {
@@ -156,6 +159,9 @@ func (c *Client) RunAgentStream(
 	histCh chan<- []providers.Message,
 	opts ...AgentConfig,
 ) (<-chan *providers.StreamChunk, error) {
+	if req == nil {
+		return nil, fmt.Errorf("agent: request required")
+	}
 	cfg := applyAgentDefaults(opts)
 	msgs := make([]providers.Message, len(req.Messages))
 	copy(msgs, req.Messages)
@@ -163,20 +169,19 @@ func (c *Client) RunAgentStream(
 	out := make(chan *providers.StreamChunk, 16)
 
 	go func() {
-		defer close(out)
-		if histCh != nil {
-			defer func() {
-				select {
-				case histCh <- msgs:
-				default:
-				}
-			}()
-		}
+		defer func() {
+			close(out)
+			if histCh == nil {
+				return
+			}
+			select {
+			case histCh <- msgs:
+			case <-ctx.Done():
+			}
+		}()
 
 		emit := func(ev AgentEvent) {
-			if cfg.Hook != nil {
-				cfg.Hook(ev)
-			}
+			safeHook(cfg.Hook, ev)
 		}
 
 		send := func(chunk *providers.StreamChunk) bool {
@@ -282,8 +287,18 @@ func dispatchTools(
 	emit func(AgentEvent),
 ) ([]toolExecResult, error) {
 	results := make([]toolExecResult, len(calls))
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-	exec := func(i int, tc providers.ToolCall) error {
+	exec := func(i int, tc providers.ToolCall) (err error) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				err = fmt.Errorf("tool %q: panic: %v", tc.Function.Name, rec)
+			}
+		}()
+		if fn == nil {
+			return fmt.Errorf("tool %q: tool function is nil", tc.Function.Name)
+		}
 		emit(AgentEvent{
 			Type:      EventToolCall,
 			Iteration: iteration,
@@ -312,6 +327,7 @@ func dispatchTools(
 	if cfg.DisableParallel || len(calls) == 1 {
 		for i, tc := range calls {
 			if err := exec(i, tc); err != nil {
+				cancel()
 				return nil, err
 			}
 		}
@@ -333,6 +349,7 @@ func dispatchTools(
 				mu.Lock()
 				if firstErr == nil {
 					firstErr = err
+					cancel()
 				}
 				mu.Unlock()
 			}
@@ -347,8 +364,9 @@ func dispatchTools(
 }
 
 // trimHistory keeps at most max messages, always preserving system messages
-// at the front and retaining the most recent non-system messages.
-// Returns msgs unchanged when max is 0 or len(msgs) <= max.
+// at the front and retaining the most recent non-system turns.
+// An assistant message that requested tools stays with the following tool
+// results. Returns msgs unchanged when max is 0 or len(msgs) <= max.
 func trimHistory(msgs []providers.Message, max int) []providers.Message {
 	if max <= 0 || len(msgs) <= max {
 		return msgs
@@ -367,10 +385,55 @@ func trimHistory(msgs []providers.Message, max int) []providers.Message {
 	if keep <= 0 {
 		return system
 	}
-	if len(rest) > keep {
-		rest = rest[len(rest)-keep:]
+
+	groups := groupTurns(rest)
+	total := 0
+	start := len(groups)
+	for i := len(groups) - 1; i >= 0; i-- {
+		n := len(groups[i])
+		if total+n > keep {
+			if start == len(groups) {
+				start = i
+			}
+			break
+		}
+		total += n
+		start = i
 	}
-	return append(system, rest...)
+	kept := make([]providers.Message, 0, total)
+	for _, group := range groups[start:] {
+		kept = append(kept, group...)
+	}
+	return append(system, kept...)
+}
+
+// groupTurns bundles an assistant tool call with the tool results that follow it.
+func groupTurns(msgs []providers.Message) [][]providers.Message {
+	groups := make([][]providers.Message, 0, len(msgs))
+	for i := 0; i < len(msgs); {
+		if msgs[i].Role == "assistant" && len(msgs[i].ToolCalls) > 0 {
+			j := i + 1
+			for j < len(msgs) && msgs[j].Role == "tool" {
+				j++
+			}
+			groups = append(groups, msgs[i:j])
+			i = j
+			continue
+		}
+		groups = append(groups, msgs[i:i+1])
+		i++
+	}
+	return groups
+}
+
+// safeHook runs a caller hook and contains a panic so observability code
+// cannot crash the agent loop.
+func safeHook(hook func(AgentEvent), ev AgentEvent) {
+	if hook == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	hook(ev)
 }
 
 // applyAgentDefaults fills zero-value AgentConfig fields with sensible defaults.

@@ -2,7 +2,7 @@
 //
 // Shows how to:
 // - Connect to a local MCP server launched as a subprocess (stdio transport).
-// - Connect to a remote MCP server via Streamable HTTP (spec 2025-03-26).
+// - Connect to a remote MCP server via Streamable HTTP (spec 2025-11-25).
 // - Fetch tool definitions and run an agent that calls MCP tools automatically.
 // - Observe tool list change notifications.
 // - Call MCP tools directly without an agent loop.

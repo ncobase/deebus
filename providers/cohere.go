@@ -1,12 +1,10 @@
 package providers
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -24,7 +22,7 @@ func NewCohere(cfg Config) *CohereProvider {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
 	}
-	return &CohereProvider{cfg: cfg, client: &http.Client{Timeout: cfg.Timeout}}
+	return &CohereProvider{cfg: cfg, client: newHTTPClient(cfg.Timeout)}
 }
 
 func (p *CohereProvider) Name() string { return "cohere" }
@@ -90,7 +88,7 @@ func (p *CohereProvider) Complete(ctx context.Context, req *Request) (*Response,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 
@@ -206,7 +204,7 @@ func (p *CohereProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		resp.Body.Close()
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
@@ -225,7 +223,7 @@ func (p *CohereProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		}
 		accumulators := map[int]*tcAccumulator{}
 
-		scanner := bufio.NewScanner(resp.Body)
+		scanner := newStreamScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
 			if !strings.HasPrefix(line, "data: ") {
@@ -358,7 +356,7 @@ func (p *CohereProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 

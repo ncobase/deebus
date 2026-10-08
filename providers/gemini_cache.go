@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -81,7 +80,7 @@ func (p *GeminiProvider) CreateCache(ctx context.Context, req *CreateCacheReques
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 
@@ -120,7 +119,7 @@ func (p *GeminiProvider) GetCache(ctx context.Context, name string) (*Cache, err
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 
@@ -166,7 +165,7 @@ func (p *GeminiProvider) ListCaches(ctx context.Context, req *ListCachesRequest)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 
@@ -240,7 +239,7 @@ func (p *GeminiProvider) UpdateCache(ctx context.Context, req *UpdateCacheReques
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 
@@ -279,7 +278,7 @@ func (p *GeminiProvider) DeleteCache(ctx context.Context, name string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		return parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 	return nil

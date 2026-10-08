@@ -1,12 +1,10 @@
 package providers
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -33,7 +31,7 @@ func NewAnthropic(cfg Config) *AnthropicProvider {
 	}
 	return &AnthropicProvider{
 		cfg:    cfg,
-		client: &http.Client{Timeout: cfg.Timeout},
+		client: newHTTPClient(cfg.Timeout),
 	}
 }
 
@@ -107,7 +105,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
 
@@ -252,7 +250,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b := readErrorBody(resp.Body)
 		resp.Body.Close()
 		return nil, parseError(resp.StatusCode, b, resp.Header, p.Name())
 	}
@@ -310,7 +308,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 			} `json:"usage"`
 		}
 
-		scanner := bufio.NewScanner(resp.Body)
+		scanner := newStreamScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
 			if !strings.HasPrefix(line, "data: ") {

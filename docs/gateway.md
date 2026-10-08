@@ -69,7 +69,9 @@ client, err := deebus.NewClient(deebus.Config{
 `Client.Complete` and `Client.Stream` apply the policy before each provider
 attempt. Each fallback attempt starts from a fresh deep clone of the caller's
 request, so provider-specific mutations never leak back to the original
-request or across fallback providers.
+request or across fallback providers. `Client.Embed` applies
+`Limits.MaxTextBytes` to the embedding inputs and records the call in
+`Client.Stats`.
 
 ## Reports
 

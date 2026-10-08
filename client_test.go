@@ -112,6 +112,35 @@ func TestConfigValidate(t *testing.T) {
 		{"fallback invalid format", func(c *Config) {
 			c.Fallbacks = []string{"invalid"}
 		}, true},
+		{"primary provider missing", func(c *Config) {
+			c.Primary = "anthropic/claude-opus-4-6"
+		}, true},
+		{"localhost suffix bypass", func(c *Config) {
+			c.Providers["openai"] = ProviderConfig{Type: "openai", APIKey: "k", BaseURL: "http://localhost.evil.com"}
+		}, true},
+		{"userinfo bypass", func(c *Config) {
+			c.Providers["openai"] = ProviderConfig{Type: "openai", APIKey: "k", BaseURL: "http://127.0.0.1@evil.com"}
+		}, true},
+		{"ipv6 loopback allowed", func(c *Config) {
+			c.Providers["openai"] = ProviderConfig{Type: "openai", APIKey: "k", BaseURL: "http://[::1]:11434"}
+		}, false},
+		{"negative timeout", func(c *Config) { c.Timeout = -1 }, true},
+		{"header injection", func(c *Config) {
+			c.Providers["openai"] = ProviderConfig{
+				Type:    "openai",
+				APIKey:  "k",
+				BaseURL: "https://api.openai.com",
+				Headers: map[string]string{"X-Test": "bad\r\nX-Injected: 1"},
+			}
+		}, true},
+		{"unknown api mode", func(c *Config) {
+			c.Providers["openai"] = ProviderConfig{
+				Type:    "openai",
+				APIKey:  "k",
+				BaseURL: "https://api.openai.com",
+				APIMode: "assistants",
+			}
+		}, true},
 	}
 
 	for _, tt := range tests {

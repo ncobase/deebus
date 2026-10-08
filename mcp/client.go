@@ -95,15 +95,20 @@ func newClient(ctx context.Context, t transport, extraNotify func(string, json.R
 // NewStdioClient launches command with args and env appended to the current
 // environment, performs the MCP handshake, and returns a ready Client.
 func NewStdioClient(ctx context.Context, command string, args, env []string, opts ...ClientOption) (*Client, error) {
-	t, err := newStdioTransport(ctx, command, args, env)
+	t, err := newStdioTransport(command, args, env)
 	if err != nil {
 		return nil, err
 	}
-	return newClient(ctx, t, resolveOptions(opts))
+	c, err := newClient(ctx, t, resolveOptions(opts))
+	if err != nil {
+		_ = t.close()
+		return nil, err
+	}
+	return c, nil
 }
 
 // NewHTTPClient connects to an MCP server at endpoint using the Streamable
-// HTTP transport (spec 2025-03-26) and performs the initialization handshake.
+// HTTP transport (spec 2025-11-25) and performs the initialization handshake.
 //
 //	c, err := mcp.NewHTTPClient(ctx, "https://mcp.example.com/mcp", 30*time.Second)
 func NewHTTPClient(ctx context.Context, endpoint string, timeout time.Duration, opts ...ClientOption) (*Client, error) {
@@ -147,12 +152,16 @@ func (c *Client) Tools(ctx context.Context) ([]providers.Tool, error) {
 	return mcpToolsToProviders(tools), nil
 }
 
+const maxToolListPages = 64
+
 // fetchAllTools retrieves all pages of tools/list.
+// A repeated cursor or a page cap stops a server from looping forever.
 func (c *Client) fetchAllTools(ctx context.Context) ([]Tool, error) {
 	var all []Tool
 	var cursor string
+	seen := make(map[string]struct{})
 
-	for {
+	for page := 0; page < maxToolListPages; page++ {
 		params := listToolsParams{Cursor: cursor}
 		raw, err := c.t.call(ctx, "tools/list", params)
 		if err != nil {
@@ -167,19 +176,23 @@ func (c *Client) fetchAllTools(ctx context.Context) ([]Tool, error) {
 		all = append(all, result.Tools...)
 
 		if result.NextCursor == "" {
-			break
+			return all, nil
 		}
+		if _, ok := seen[result.NextCursor]; ok {
+			return nil, fmt.Errorf("mcp: tools/list cursor %q repeated", result.NextCursor)
+		}
+		seen[result.NextCursor] = struct{}{}
 		cursor = result.NextCursor
 	}
 
-	return all, nil
+	return nil, fmt.Errorf("mcp: tools/list exceeded %d pages", maxToolListPages)
 }
 
 // CallTool invokes a tool on the MCP server by name with JSON-encoded args and
 // returns the full CallToolResult (including the IsError flag).
 //
-// Most callers should use Execute, which returns just the text and propagates
-// IsError as a Go error.
+// Most callers should use Execute. Execute returns tool-level IsError as text
+// so the model can recover; protocol failures are still Go errors.
 func (c *Client) CallTool(ctx context.Context, name, argsJSON string) (*CallToolResult, error) {
 	var args map[string]any
 	if argsJSON != "" {

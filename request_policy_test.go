@@ -155,6 +155,10 @@ func TestRequestLimitsRejectOversizedText(t *testing.T) {
 	if !strings.Contains(err.Error(), "text bytes") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	embedErr := RequestLimits{MaxTextBytes: 4}.ValidateEmbed(&EmbedRequest{Input: []string{"abcdef"}})
+	if embedErr == nil || !strings.Contains(embedErr.Error(), "embed text bytes") {
+		t.Fatalf("ValidateEmbed() = %v", embedErr)
+	}
 }
 
 func TestCloneRequestDeepCopy(t *testing.T) {

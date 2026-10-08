@@ -19,7 +19,7 @@ import (
 //	5xx Server Error  -> retryable,     fallback
 //	other             -> retryable if >=500, always fallback
 func parseError(statusCode int, body []byte, header http.Header, provider string) *ProviderError {
-	msg := string(body)
+	msg := redactSensitive(string(body))
 	if len(msg) > 300 {
 		msg = msg[:300] + "..."
 	}
@@ -88,10 +88,16 @@ func parseRetryAfter(h http.Header) time.Duration {
 		return 0
 	}
 	if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+		if secs > int(maxRetryAfter/time.Second) {
+			return maxRetryAfter
+		}
 		return time.Duration(secs) * time.Second
 	}
 	if t, err := http.ParseTime(v); err == nil {
 		if d := time.Until(t); d > 0 {
+			if d > maxRetryAfter {
+				return maxRetryAfter
+			}
 			return d
 		}
 	}
@@ -103,7 +109,7 @@ func networkError(provider string, err error) *ProviderError {
 	return &ProviderError{
 		Type:      ErrTypeNetwork,
 		Provider:  provider,
-		Message:   err.Error(),
+		Message:   redactSensitive(err.Error()),
 		Retryable: true,
 		Fallback:  true,
 		Err:       err,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -291,6 +292,16 @@ func TestClientPaginatedTools(t *testing.T) {
 	}
 	if callNum != 2 {
 		t.Errorf("tools/list called %d times, want 2 for 2 pages", callNum)
+	}
+}
+
+func TestClientRejectsRepeatedToolCursor(t *testing.T) {
+	c, mt := newTestClient(t, nil)
+	mt.handle("tools/list", func(json.RawMessage) (any, error) {
+		return listToolsResult{NextCursor: "again"}, nil
+	})
+	if _, err := c.Tools(context.Background()); err == nil || !strings.Contains(err.Error(), "repeated") {
+		t.Fatalf("expected repeated cursor error, got %v", err)
 	}
 }
 
