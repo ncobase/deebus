@@ -3,6 +3,7 @@ package providers
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"mime/multipart"
@@ -59,7 +60,13 @@ func (p *OpenAIProvider) GenerateImage(ctx context.Context, req *ImageRequest) (
 }
 
 func (p *OpenAIProvider) SynthesizeSpeech(ctx context.Context, req *SpeechRequest) (*SpeechResponse, error) {
-	if req == nil || strings.TrimSpace(req.Input) == "" {
+	if req == nil {
+		return nil, fmt.Errorf("speech request required")
+	}
+	if len(req.Speakers) > 0 {
+		return nil, unsupportedCapability(p.Name(), "multi-speaker speech")
+	}
+	if strings.TrimSpace(req.Input) == "" {
 		return nil, fmt.Errorf("speech input required")
 	}
 	format := req.Format
@@ -79,6 +86,9 @@ func (p *OpenAIProvider) SynthesizeSpeech(ctx context.Context, req *SpeechReques
 	if req.Speed > 0 {
 		body["speed"] = req.Speed
 	}
+	if req.Instructions != "" {
+		body["instructions"] = req.Instructions
+	}
 	audio, err := p.postBytes(ctx, req.Model, "/v1/audio/speech", body)
 	if err != nil {
 		return nil, err
@@ -89,6 +99,98 @@ func (p *OpenAIProvider) SynthesizeSpeech(ctx context.Context, req *SpeechReques
 		Model:     req.Model,
 		Provider:  p.Name(),
 	}, nil
+}
+
+func (p *OpenAIProvider) EditImage(ctx context.Context, req *ImageEditRequest) (*ImageResponse, error) {
+	if req == nil || strings.TrimSpace(req.Prompt) == "" {
+		return nil, fmt.Errorf("image prompt required")
+	}
+	if len(req.Images) == 0 {
+		return nil, fmt.Errorf("at least one source image required")
+	}
+	images := make([]any, 0, len(req.Images))
+	for i, image := range req.Images {
+		ref, err := openAIImageRef(image)
+		if err != nil {
+			return nil, fmt.Errorf("image %d: %w", i, err)
+		}
+		images = append(images, ref)
+	}
+	body := map[string]any{
+		"model":  req.Model,
+		"prompt": req.Prompt,
+		"images": images,
+	}
+	if req.Mask != nil {
+		ref, err := openAIImageRef(*req.Mask)
+		if err != nil {
+			return nil, fmt.Errorf("mask: %w", err)
+		}
+		body["mask"] = ref
+	}
+	if req.N > 0 {
+		body["n"] = req.N
+	}
+	if req.Size != "" {
+		body["size"] = req.Size
+	}
+	if req.Quality != "" {
+		body["quality"] = req.Quality
+	}
+	if req.Background != "" {
+		body["background"] = req.Background
+	}
+	if req.OutputFormat != "" {
+		body["output_format"] = req.OutputFormat
+	}
+	if req.ResponseFormat != "" {
+		body["response_format"] = req.ResponseFormat
+	}
+	if req.UserID != "" {
+		body["user"] = req.UserID
+	}
+	var payload struct {
+		Data []struct {
+			B64JSON       string `json:"b64_json"`
+			URL           string `json:"url"`
+			RevisedPrompt string `json:"revised_prompt"`
+		} `json:"data"`
+	}
+	if err := p.postJSON(ctx, req.Model, "/v1/images/edits", body, &payload); err != nil {
+		return nil, err
+	}
+	out := make([]Image, 0, len(payload.Data))
+	mediaType := "image/png"
+	if req.OutputFormat != "" {
+		mediaType = "image/" + req.OutputFormat
+	}
+	for _, item := range payload.Data {
+		out = append(out, Image{
+			B64JSON:       item.B64JSON,
+			URL:           item.URL,
+			RevisedPrompt: item.RevisedPrompt,
+			MediaType:     mediaType,
+		})
+	}
+	return &ImageResponse{Images: out, Model: req.Model, Provider: p.Name()}, nil
+}
+
+func openAIImageRef(image ImageInput) (map[string]string, error) {
+	switch {
+	case image.FileID != "":
+		return map[string]string{"file_id": image.FileID}, nil
+	case image.URL != "":
+		return map[string]string{"image_url": image.URL}, nil
+	case len(image.Data) > 0:
+		mediaType := image.MediaType
+		if mediaType == "" {
+			mediaType = "image/png"
+		}
+		encoded := base64.StdEncoding.EncodeToString(image.Data)
+		return map[string]string{"image_url": "data:" + mediaType + ";base64," + encoded}, nil
+	default:
+		return nil, fmt.Errorf("data, url, or file id required")
+	}
 }
 
 func (p *OpenAIProvider) Transcribe(ctx context.Context, req *TranscribeRequest) (*TranscribeResponse, error) {

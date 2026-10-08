@@ -19,6 +19,7 @@ type CohereProvider struct {
 
 // NewCohere creates a new Cohere provider.
 func NewCohere(cfg Config) *CohereProvider {
+	cfg = applyDefaultBaseURL("cohere", cfg)
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
 	}

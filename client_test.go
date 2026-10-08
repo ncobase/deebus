@@ -70,6 +70,17 @@ func TestConfigValidate(t *testing.T) {
 	}{
 		{"valid", func(*Config) {}, false},
 		{"missing primary", func(c *Config) { c.Primary = "" }, true},
+		{"official base url can be omitted", func(c *Config) {
+			c.Providers["openai"] = ProviderConfig{Type: "openai", APIKey: "k"}
+		}, false},
+		{"azure still requires base url", func(c *Config) {
+			c.Primary = "azure/gpt-4o"
+			c.Providers = map[string]ProviderConfig{"azure": {Type: "azure", APIKey: "k"}}
+		}, true},
+		{"qwen official endpoint", func(c *Config) {
+			c.Primary = "qwen/qwen-plus"
+			c.Providers = map[string]ProviderConfig{"qwen": {Type: "qwen", APIKey: "k"}}
+		}, false},
 		{"no providers", func(c *Config) { c.Providers = nil }, true},
 		{"missing type", func(c *Config) { c.Providers["openai"] = ProviderConfig{APIKey: "k", BaseURL: "https://x.com"} }, true},
 		{"missing apiKey", func(c *Config) { c.Providers["openai"] = ProviderConfig{Type: "openai", BaseURL: "https://x.com"} }, true},

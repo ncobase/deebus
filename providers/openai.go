@@ -47,6 +47,7 @@ func newOpenAIProvider(name, compat string, cfg Config) *OpenAIProvider {
 	if strings.TrimSpace(name) == "" {
 		name = "openai"
 	}
+	cfg = applyDefaultBaseURL(name, cfg)
 	return &OpenAIProvider{
 		cfg:    cfg,
 		client: newHTTPClient(cfg.Timeout),
@@ -64,9 +65,6 @@ func (p *OpenAIProvider) Name() string {
 
 func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
 	if normalizeAPIMode(p.cfg.APIMode) == "responses" {
-		if p.compat == "azure" {
-			return nil, unsupportedCapability(p.Name(), "responses API")
-		}
 		return p.completeResponses(ctx, req)
 	}
 	body := map[string]any{
@@ -241,9 +239,6 @@ func (p *OpenAIProvider) completeFromSSE(ctx context.Context, req *Request, body
 
 func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
 	if normalizeAPIMode(p.cfg.APIMode) == "responses" {
-		if p.compat == "azure" {
-			return nil, unsupportedCapability(p.Name(), "responses API")
-		}
 		return p.streamResponses(ctx, req)
 	}
 	body := map[string]any{
@@ -683,7 +678,10 @@ func (p *OpenAIProvider) setAuth(r *http.Request, creds Credentials) {
 
 func (p *OpenAIProvider) openAIEndpoint(model, openaiPath string) (string, error) {
 	if p.compat != "azure" {
-		return buildProviderEndpoint(p.cfg.BaseURL, openaiPath)
+		return buildProviderEndpoint(p.cfg.BaseURL, p.wirePath(openaiPath))
+	}
+	if openaiPath == "/v1/responses" {
+		return p.azureV1Endpoint("/responses")
 	}
 	version := strings.TrimSpace(p.cfg.APIVersion)
 	if version == "" {
@@ -712,6 +710,34 @@ func (p *OpenAIProvider) openAIEndpoint(model, openaiPath string) (string, error
 	query.Set("api-version", version)
 	u.RawQuery = query.Encode()
 	return u.String(), nil
+}
+
+// azureV1Endpoint builds the current Azure OpenAI v1 route. That route carries
+// the deployment name in the JSON model field and does not take api-version.
+func (p *OpenAIProvider) azureV1Endpoint(suffix string) (string, error) {
+	base := strings.TrimRight(strings.TrimSpace(p.cfg.BaseURL), "/")
+	switch {
+	case strings.HasSuffix(base, "/openai/v1"):
+	case strings.HasSuffix(base, "/openai"):
+		base += "/v1"
+	default:
+		base += "/openai/v1"
+	}
+	return buildProviderEndpoint(base, suffix)
+}
+
+// wirePath maps the client's OpenAI paths onto a provider's official routes.
+// Perplexity chat is POST /chat/completions on https://api.perplexity.ai.
+func (p *OpenAIProvider) wirePath(openaiPath string) string {
+	if p.name != "perplexity" {
+		return openaiPath
+	}
+	switch openaiPath {
+	case "/v1/chat/completions":
+		return "/chat/completions"
+	default:
+		return openaiPath
+	}
 }
 
 func (p *OpenAIProvider) completeResponses(ctx context.Context, req *Request) (*Response, error) {

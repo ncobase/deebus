@@ -128,10 +128,11 @@ func (c *Config) Validate() error {
 		if err := validateProviderAPIMode(name, cfg); err != nil {
 			return err
 		}
-		if cfg.BaseURL == "" {
+		baseURL := providers.ResolveBaseURL(cfg.Type, cfg.BaseURL)
+		if baseURL == "" {
 			return fmt.Errorf("provider %q: baseURL required", name)
 		}
-		if !isAllowedURL(cfg.BaseURL) {
+		if !isAllowedURL(baseURL) {
 			return fmt.Errorf("provider %q: baseURL must use https, or http on localhost, 127.0.0.1, ::1, or 0.0.0.0", name)
 		}
 		if err := providers.ValidateHeaderSafety(cfg.Headers, map[string]string{
@@ -554,7 +555,7 @@ func buildProvider(
 	pcfg := providers.Config{
 		APIKey:             cfg.APIKey,
 		BearerToken:        cfg.BearerToken,
-		BaseURL:            cfg.BaseURL,
+		BaseURL:            providers.ResolveBaseURL(cfg.Type, cfg.BaseURL),
 		APIMode:            cfg.APIMode,
 		Timeout:            timeout,
 		Headers:            cloneStringMap(cfg.Headers),

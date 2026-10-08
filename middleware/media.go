@@ -14,6 +14,22 @@ func imageGenerator(p providers.Provider) (providers.ImageGenerator, error) {
 	return generator, nil
 }
 
+func tokenCounter(p providers.Provider) (providers.TokenCounter, error) {
+	counter, ok := p.(providers.TokenCounter)
+	if !ok {
+		return nil, providers.Unsupported(p.Name(), "token counting")
+	}
+	return counter, nil
+}
+
+func imageEditor(p providers.Provider) (providers.ImageEditor, error) {
+	editor, ok := p.(providers.ImageEditor)
+	if !ok {
+		return nil, providers.Unsupported(p.Name(), "image editing")
+	}
+	return editor, nil
+}
+
 func speechSynthesizer(p providers.Provider) (providers.SpeechSynthesizer, error) {
 	synth, ok := p.(providers.SpeechSynthesizer)
 	if !ok {
@@ -38,12 +54,28 @@ func reranker(p providers.Provider) (providers.Reranker, error) {
 	return item, nil
 }
 
+func (m *LoggingMiddleware) CountTokens(ctx context.Context, req *providers.Request) (*providers.TokenCount, error) {
+	inner, err := tokenCounter(m.provider)
+	if err != nil {
+		return nil, err
+	}
+	return inner.CountTokens(ctx, req)
+}
+
 func (m *LoggingMiddleware) GenerateImage(ctx context.Context, req *providers.ImageRequest) (*providers.ImageResponse, error) {
 	inner, err := imageGenerator(m.provider)
 	if err != nil {
 		return nil, err
 	}
 	return inner.GenerateImage(ctx, req)
+}
+
+func (m *LoggingMiddleware) EditImage(ctx context.Context, req *providers.ImageEditRequest) (*providers.ImageResponse, error) {
+	inner, err := imageEditor(m.provider)
+	if err != nil {
+		return nil, err
+	}
+	return inner.EditImage(ctx, req)
 }
 
 func (m *LoggingMiddleware) SynthesizeSpeech(ctx context.Context, req *providers.SpeechRequest) (*providers.SpeechResponse, error) {
@@ -70,6 +102,16 @@ func (m *LoggingMiddleware) Rerank(ctx context.Context, req *providers.RerankReq
 	return inner.Rerank(ctx, req)
 }
 
+func (m *RetryMiddleware) CountTokens(ctx context.Context, req *providers.Request) (*providers.TokenCount, error) {
+	return retryValue(m, ctx, func() (*providers.TokenCount, error) {
+		inner, err := tokenCounter(m.provider)
+		if err != nil {
+			return nil, err
+		}
+		return inner.CountTokens(ctx, req)
+	})
+}
+
 func (m *RetryMiddleware) GenerateImage(ctx context.Context, req *providers.ImageRequest) (*providers.ImageResponse, error) {
 	return retryValue(m, ctx, func() (*providers.ImageResponse, error) {
 		inner, err := imageGenerator(m.provider)
@@ -77,6 +119,16 @@ func (m *RetryMiddleware) GenerateImage(ctx context.Context, req *providers.Imag
 			return nil, err
 		}
 		return inner.GenerateImage(ctx, req)
+	})
+}
+
+func (m *RetryMiddleware) EditImage(ctx context.Context, req *providers.ImageEditRequest) (*providers.ImageResponse, error) {
+	return retryValue(m, ctx, func() (*providers.ImageResponse, error) {
+		inner, err := imageEditor(m.provider)
+		if err != nil {
+			return nil, err
+		}
+		return inner.EditImage(ctx, req)
 	})
 }
 
@@ -110,6 +162,20 @@ func (m *RetryMiddleware) Rerank(ctx context.Context, req *providers.RerankReque
 	})
 }
 
+func (m *CircuitBreakerMiddleware) CountTokens(ctx context.Context, req *providers.Request) (*providers.TokenCount, error) {
+	if err := m.allow(); err != nil {
+		return nil, err
+	}
+	inner, err := tokenCounter(m.provider)
+	if err != nil {
+		m.record(err)
+		return nil, err
+	}
+	resp, err := inner.CountTokens(ctx, req)
+	m.record(err)
+	return resp, err
+}
+
 func (m *CircuitBreakerMiddleware) GenerateImage(ctx context.Context, req *providers.ImageRequest) (*providers.ImageResponse, error) {
 	if err := m.allow(); err != nil {
 		return nil, err
@@ -120,6 +186,20 @@ func (m *CircuitBreakerMiddleware) GenerateImage(ctx context.Context, req *provi
 		return nil, err
 	}
 	resp, err := inner.GenerateImage(ctx, req)
+	m.record(err)
+	return resp, err
+}
+
+func (m *CircuitBreakerMiddleware) EditImage(ctx context.Context, req *providers.ImageEditRequest) (*providers.ImageResponse, error) {
+	if err := m.allow(); err != nil {
+		return nil, err
+	}
+	inner, err := imageEditor(m.provider)
+	if err != nil {
+		m.record(err)
+		return nil, err
+	}
+	resp, err := inner.EditImage(ctx, req)
 	m.record(err)
 	return resp, err
 }
@@ -166,6 +246,17 @@ func (m *CircuitBreakerMiddleware) Rerank(ctx context.Context, req *providers.Re
 	return resp, err
 }
 
+func (r *RateLimitMiddleware) CountTokens(ctx context.Context, req *providers.Request) (*providers.TokenCount, error) {
+	inner, err := tokenCounter(r.provider)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.acquire(ctx); err != nil {
+		return nil, err
+	}
+	return inner.CountTokens(ctx, req)
+}
+
 func (r *RateLimitMiddleware) GenerateImage(ctx context.Context, req *providers.ImageRequest) (*providers.ImageResponse, error) {
 	inner, err := imageGenerator(r.provider)
 	if err != nil {
@@ -175,6 +266,17 @@ func (r *RateLimitMiddleware) GenerateImage(ctx context.Context, req *providers.
 		return nil, err
 	}
 	return inner.GenerateImage(ctx, req)
+}
+
+func (r *RateLimitMiddleware) EditImage(ctx context.Context, req *providers.ImageEditRequest) (*providers.ImageResponse, error) {
+	inner, err := imageEditor(r.provider)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.acquire(ctx); err != nil {
+		return nil, err
+	}
+	return inner.EditImage(ctx, req)
 }
 
 func (r *RateLimitMiddleware) SynthesizeSpeech(ctx context.Context, req *providers.SpeechRequest) (*providers.SpeechResponse, error) {

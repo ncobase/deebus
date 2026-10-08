@@ -15,7 +15,10 @@ type (
 	EmbedResponse      = providers.EmbedResponse
 	ImageRequest       = providers.ImageRequest
 	Image              = providers.Image
+	ImageInput         = providers.ImageInput
+	ImageEditRequest   = providers.ImageEditRequest
 	ImageResponse      = providers.ImageResponse
+	SpeechTurn         = providers.SpeechTurn
 	SpeechRequest      = providers.SpeechRequest
 	SpeechResponse     = providers.SpeechResponse
 	TranscribeRequest  = providers.TranscribeRequest
@@ -23,6 +26,7 @@ type (
 	RerankRequest      = providers.RerankRequest
 	RerankResult       = providers.RerankResult
 	RerankResponse     = providers.RerankResponse
+	TokenCount         = providers.TokenCount
 	ProviderFactory    = providers.Factory
 
 	// Cache types.

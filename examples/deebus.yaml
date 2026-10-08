@@ -1,3 +1,4 @@
+# baseURL is optional when the provider has an official default.
 providers:
   anthropic:
     type: anthropic

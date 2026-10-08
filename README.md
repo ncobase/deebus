@@ -12,7 +12,7 @@
 
 | Feature                     | Details                                                                                                                                  |
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Multi-provider**          | OpenAI, Azure OpenAI, Anthropic, Gemini, Ollama, Cohere, plus OpenAI-compatible Groq, DeepSeek, Mistral, xAI, Together, OpenRouter, Fireworks, and Perplexity |
+| **Multi-provider**          | OpenAI, Azure OpenAI, Anthropic, Gemini, Ollama, Cohere, Qwen, plus OpenAI-compatible Groq, DeepSeek, Mistral, xAI, Together, OpenRouter, Fireworks, and Perplexity |
 | **Smart fallback**          | Primary -> fallbacks in order; HTTP 400 is never retried or fallen back                                                                  |
 | **Retry with jitter**       | Equal-jitter exponential backoff; honours `Retry-After` on 429                                                                           |
 | **Circuit breaker**         | Closed -> Open -> Half-open state machine per provider                                                                                   |
@@ -121,11 +121,11 @@ func main() {
 
 | Field          | Type   | Required | Description                                                                                    |
 | -------------- | ------ | -------- | ---------------------------------------------------------------------------------------------- |
-| `type`         | string | Yes      | Built-in: `openai`, `azure`, `anthropic`, `gemini`, `ollama`, `cohere`, `groq`, `deepseek`, `mistral`, `xai`, `together`, `openrouter`, `fireworks`, `perplexity`. Add more with `RegisterProvider`. |
+| `type`         | string | Yes      | Built-in: `openai`, `azure`, `anthropic`, `gemini`, `ollama`, `cohere`, `groq`, `deepseek`, `mistral`, `xai`, `together`, `openrouter`, `fireworks`, `perplexity`, `qwen`, `qwen-intl`. Add more with `RegisterProvider`. |
 | `apiKey`       | string | Yes\*    | API key. Optional when `bearerToken`, `headers`, or `CredentialProvider` supplies credentials. |
 | `bearerToken`  | string | -        | Static bearer token for OAuth-style or proxy auth                                              |
-| `baseURL`      | string | Yes      | `https://` anywhere, or `http://` only for the exact hosts `localhost`, `127.0.0.1`, `::1`, and `0.0.0.0` |
-| `apiMode`      | string | -        | OpenAI-compatible providers: `chat_completions` (default) or `responses`                        |
+| `baseURL`      | string | Required only for Azure | Overrides the official endpoint. `https://` anywhere, or `http://` only for `localhost`, `127.0.0.1`, `::1`, and `0.0.0.0`. |
+| `apiMode`      | string | -        | OpenAI-compatible providers and Azure: `chat_completions` (default) or `responses`              |
 | `apiVersion`   | string | -        | Azure OpenAI API version. Default `2024-10-21`                                                 |
 | `headers`      | map    | -        | Extra static headers sent on every request                                                     |
 | `organization` | string | -        | OpenAI `OpenAI-Organization` header                                                            |
@@ -619,11 +619,19 @@ ranked, err := client.Rerank(ctx, &deebus.RerankRequest{
 })
 ```
 
-Gemini image models return inline images. Azure deployments use `api-key` auth
-and deployment URLs; the model name is the deployment name. Groq, DeepSeek,
-Mistral, xAI, Together, OpenRouter, Fireworks, and Perplexity are OpenAI-wire
-providers. A provider that does not implement a capability is skipped so the
-next fallback can answer.
+Gemini image models return inline images. `EditImage` uses the current image
+edits contract. The old variations endpoint is retired, so a variation is an
+edit prompt against the source image. Azure chat, embeddings, images, and audio
+still use deployment URLs and `api-key` auth. Azure `apiMode: responses` calls
+`/openai/v1/responses` and puts the deployment name in the model field, without
+an `api-version` query. Groq, DeepSeek, Mistral, xAI, Together, OpenRouter,
+Fireworks, and Perplexity are OpenAI-wire providers. A provider that cannot
+perform a requested capability, format, or speaker layout is skipped.
+
+Gemini speech defaults to voice `Kore` and WAV. Set `Speakers` for
+multi-speaker audio. `mp3` stays on OpenAI-compatible speech and falls through
+when Gemini is asked for it. Gemini transcription sends the audio bytes to the
+model and returns the text.
 
 Register another OpenAI-compatible backend before creating a client:
 
@@ -634,6 +642,37 @@ deebus.RegisterProvider("myproxy", func(cfg providers.Config) providers.Provider
     return providers.NewOpenAICompatible("myproxy", cfg)
 })
 ```
+
+## Official Endpoints And Token Counts
+
+Leave `baseURL` empty to use the official endpoint. `qwen` uses DashScope
+compatible mode in China. `qwen-intl` uses the international compatible-mode
+host. Both speak the OpenAI wire protocol. Azure is resource-specific, so its
+`baseURL` stays required. Perplexity chat uses the official `/chat/completions`
+route on `https://api.perplexity.ai`.
+
+```go
+client, err := deebus.NewClient(deebus.Config{
+    Primary: "qwen/qwen-plus",
+    Providers: map[string]deebus.ProviderConfig{
+        "qwen": {Type: "qwen", APIKey: os.Getenv("DASHSCOPE_API_KEY")},
+    },
+})
+
+count, err := client.CountTokens(ctx, &deebus.Request{
+    Model:    "anthropic/claude-opus-4-6",
+    Messages: []deebus.Message{deebus.TextMessage("user", "How large is this prompt?")},
+})
+```
+
+`CountTokens` calls only an official counting endpoint:
+
+- Anthropic: `POST /v1/messages/count_tokens`, without `max_tokens`
+- Gemini: `POST /v1beta/models/{model}:countTokens`, using the same input as generation
+- Cohere: `POST /v1/tokenize` on the joined message text
+- OpenAI-compatible providers, including Qwen, have no counting endpoint and are skipped
+
+The count is not added to generation token totals.
 
 ## Model Catalog
 

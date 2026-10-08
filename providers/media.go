@@ -11,6 +11,12 @@ type ImageGenerator interface {
 	GenerateImage(ctx context.Context, req *ImageRequest) (*ImageResponse, error)
 }
 
+// ImageEditor edits or extends source images from a prompt.
+// The retired images variations endpoint is intentionally not exposed.
+type ImageEditor interface {
+	EditImage(ctx context.Context, req *ImageEditRequest) (*ImageResponse, error)
+}
+
 // SpeechSynthesizer turns text into spoken audio.
 type SpeechSynthesizer interface {
 	SynthesizeSpeech(ctx context.Context, req *SpeechRequest) (*SpeechResponse, error)
@@ -46,20 +52,56 @@ type Image struct {
 	MediaType     string
 }
 
-// ImageResponse is the result of image generation.
+// ImageResponse is the result of image generation or editing.
 type ImageResponse struct {
 	Images   []Image
 	Model    string
 	Provider string
 }
 
+// ImageInput is one source image. Set exactly one of Data, URL, or FileID.
+type ImageInput struct {
+	Data      []byte
+	URL       string
+	FileID    string
+	MediaType string
+	FileName  string
+}
+
+// ImageEditRequest edits one or more source images.
+type ImageEditRequest struct {
+	Model          string
+	Prompt         string
+	Images         []ImageInput
+	Mask           *ImageInput
+	N              int
+	Size           string
+	Quality        string
+	Background     string
+	OutputFormat   string
+	ResponseFormat string
+	UserID         string
+}
+
+// SpeechTurn is one spoken line. Gemini uses it for multi-speaker audio.
+// OpenAI-compatible speech does not accept multiple speakers.
+type SpeechTurn struct {
+	Speaker string
+	Text    string
+	Style   string
+	Voice   string
+}
+
 // SpeechRequest is a provider-neutral text-to-speech request.
 type SpeechRequest struct {
-	Model  string
-	Input  string
-	Voice  string
-	Format string // mp3, wav, opus, aac, flac, pcm
-	Speed  float64
+	Model        string
+	Input        string
+	Voice        string
+	Format       string // mp3, wav, opus, aac, flac, pcm, mulaw, alaw
+	Speed        float64
+	Instructions string
+	Language     string
+	Speakers     []SpeechTurn
 }
 
 // SpeechResponse contains synthesized audio bytes.

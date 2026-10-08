@@ -19,6 +19,7 @@ type GeminiProvider struct {
 
 // NewGemini creates a new Gemini provider.
 func NewGemini(cfg Config) *GeminiProvider {
+	cfg = applyDefaultBaseURL("gemini", cfg)
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
 	}

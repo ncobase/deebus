@@ -7,35 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.10.0] - 2026-10-08
-
-### Added
-
-- Provider registry via `providers.Register` / `deebus.RegisterProvider`.
-- Built-in OpenAI-compatible provider types: `groq`, `deepseek`, `mistral`, `xai`, `together`, `openrouter`, `fireworks`, and `perplexity`.
-- `azure` provider with deployment URLs, `api-key` authentication, and `apiVersion`.
-- `GenerateImage` for OpenAI-compatible image APIs and Gemini native image output.
-- `SynthesizeSpeech` and `Transcribe` for OpenAI-compatible audio APIs.
-- `Rerank` for Cohere rerank.
-- Media calls follow the provider fallback chain. A `provider/model` value selects one provider. Text and media limits apply.
-
 ## [1.9.0] - 2026-10-08
 
 ### Added
 
-- Embedding calls now update `Client.Stats`, and `RequestLimits.MaxTextBytes` also applies to embedding inputs.
-- `Client.Health` checks providers concurrently.
-- `Client.ListModels` is documented alongside health checks.
+- Provider registry via `providers.Register` and `deebus.RegisterProvider`.
+- OpenAI-compatible provider types: `groq`, `deepseek`, `mistral`, `xai`, `together`, `openrouter`, `fireworks`, `perplexity`, `qwen`, and `qwen-intl`.
+- Official default `baseURL` values. Azure remains explicit because each resource has its own host. Perplexity chat uses `POST /chat/completions` on `https://api.perplexity.ai`.
+- `azure` provider with deployment URLs, `api-key` authentication, `apiVersion`, and Responses API calls on `/openai/v1/responses`.
+- `GenerateImage` and `EditImage` for the current OpenAI image APIs and Gemini image output. The retired variations endpoint is not provided.
+- `SynthesizeSpeech` and `Transcribe` for OpenAI-compatible audio and Gemini speech, including Gemini multi-speaker turns.
+- `Rerank` for Cohere rerank.
+- `CountTokens` for Anthropic `/v1/messages/count_tokens`, Gemini `countTokens`, and Cohere `/v1/tokenize`. Providers without an official counting endpoint are skipped.
+- Embedding calls update `Client.Stats`, and `RequestLimits.MaxTextBytes` also applies to embedding inputs.
+- Concurrent `Client.Health`.
 
 ### Changed
 
 - Provider HTTP clients refuse redirects, require TLS 1.2, send a `deebus` user agent, and cap buffered responses and stream lines.
 - `baseURL` validation parses the URL. Plain HTTP is allowed only for the exact hosts `localhost`, `127.0.0.1`, `::1`, and `0.0.0.0`.
-- `Config.Validate` checks the primary model, negative tunables, OpenAI `apiMode`, and header or credential values that contain control characters.
+- `Config.Validate` checks the primary model, negative tunables, `apiMode`, and header or credential values that contain control characters.
 - Provider errors redact query secrets, bearer tokens, and `sk-` keys. `Retry-After` waits are capped at 2 minutes.
-- Agent history trimming keeps an assistant tool call with its tool results. Tool panics and hook panics no longer crash the process. `RunAgentStream` delivers history after the stream closes instead of dropping it.
+- Agent history trimming keeps an assistant tool call with its tool results. Tool panics and hook panics no longer crash the process. `RunAgentStream` delivers history after the stream closes.
 - MCP stdio processes live until `Close`, stdin is closed correctly, and a failed handshake reaps the process. HTTP transport refuses redirects, limits response bodies, and rejects unsafe session IDs. `tools/list` stops on a repeated cursor or after 64 pages.
-- MCP comments and the README now consistently name spec `2025-11-25`.
+- MCP comments and the README name spec `2025-11-25`.
+- Media and token-count calls follow the provider fallback chain. A `provider/model` value selects one provider. Text and media limits apply.
 
 ### Fixed
 

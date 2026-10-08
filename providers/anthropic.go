@@ -26,6 +26,7 @@ type AnthropicProvider struct {
 
 // NewAnthropic creates a new Anthropic provider.
 func NewAnthropic(cfg Config) *AnthropicProvider {
+	cfg = applyDefaultBaseURL("anthropic", cfg)
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
 	}
@@ -38,47 +39,7 @@ func NewAnthropic(cfg Config) *AnthropicProvider {
 func (p *AnthropicProvider) Name() string { return "anthropic" }
 
 func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
-	maxTokens := defaultMaxTokens
-	if limit := outputTokenLimit(req); limit > 0 {
-		maxTokens = limit
-	}
-
-	_, msgs := ExtractSystemMessage(req.Messages)
-
-	body := map[string]any{
-		"model":      req.Model,
-		"messages":   ConvertToAnthropicFormat(msgs),
-		"max_tokens": maxTokens,
-	}
-	if sys := BuildAnthropicSystem(req.Messages); sys != nil {
-		body["system"] = sys
-	}
-	if req.Cache != nil && req.Cache.Control != nil {
-		body["cache_control"] = req.Cache.Control
-	}
-	if req.Temperature > 0 {
-		body["temperature"] = req.Temperature
-	}
-	if req.TopP > 0 {
-		body["top_p"] = req.TopP
-	}
-	if len(req.Stop) > 0 {
-		body["stop_sequences"] = req.Stop
-	}
-	if thinking := anthropicThinking(req.Reasoning); thinking != nil {
-		body["thinking"] = thinking
-	}
-	if len(req.Tools) > 0 {
-		body["tools"] = ConvertToolsToAnthropic(req.Tools)
-		if req.ToolChoice != "" {
-			body["tool_choice"] = AnthropicToolChoice(req.ToolChoice)
-		}
-	}
-	if req.UserID != "" {
-		body["metadata"] = map[string]any{"user_id": req.UserID}
-	}
-
-	data, err := json.Marshal(body)
+	data, err := json.Marshal(anthropicBody(req, false))
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
@@ -183,48 +144,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 }
 
 func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
-	maxTokens := defaultMaxTokens
-	if limit := outputTokenLimit(req); limit > 0 {
-		maxTokens = limit
-	}
-
-	_, msgs := ExtractSystemMessage(req.Messages)
-
-	body := map[string]any{
-		"model":      req.Model,
-		"messages":   ConvertToAnthropicFormat(msgs),
-		"max_tokens": maxTokens,
-		"stream":     true,
-	}
-	if sys := BuildAnthropicSystem(req.Messages); sys != nil {
-		body["system"] = sys
-	}
-	if req.Cache != nil && req.Cache.Control != nil {
-		body["cache_control"] = req.Cache.Control
-	}
-	if req.Temperature > 0 {
-		body["temperature"] = req.Temperature
-	}
-	if req.TopP > 0 {
-		body["top_p"] = req.TopP
-	}
-	if len(req.Stop) > 0 {
-		body["stop_sequences"] = req.Stop
-	}
-	if thinking := anthropicThinking(req.Reasoning); thinking != nil {
-		body["thinking"] = thinking
-	}
-	if len(req.Tools) > 0 {
-		body["tools"] = ConvertToolsToAnthropic(req.Tools)
-		if req.ToolChoice != "" {
-			body["tool_choice"] = AnthropicToolChoice(req.ToolChoice)
-		}
-	}
-	if req.UserID != "" {
-		body["metadata"] = map[string]any{"user_id": req.UserID}
-	}
-
-	data, err := json.Marshal(body)
+	data, err := json.Marshal(anthropicBody(req, true))
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
@@ -484,6 +404,50 @@ func (p *AnthropicProvider) Health(ctx context.Context) error {
 	p.setHeaders(httpReq, creds)
 
 	return doProviderJSONRequest(ctx, p.client, httpReq, p.Name(), &struct{}{})
+}
+
+func anthropicBody(req *Request, stream bool) map[string]any {
+	maxTokens := defaultMaxTokens
+	if limit := outputTokenLimit(req); limit > 0 {
+		maxTokens = limit
+	}
+	_, msgs := ExtractSystemMessage(req.Messages)
+	body := map[string]any{
+		"model":      req.Model,
+		"messages":   ConvertToAnthropicFormat(msgs),
+		"max_tokens": maxTokens,
+	}
+	if stream {
+		body["stream"] = true
+	}
+	if sys := BuildAnthropicSystem(req.Messages); sys != nil {
+		body["system"] = sys
+	}
+	if req.Cache != nil && req.Cache.Control != nil {
+		body["cache_control"] = req.Cache.Control
+	}
+	if req.Temperature > 0 {
+		body["temperature"] = req.Temperature
+	}
+	if req.TopP > 0 {
+		body["top_p"] = req.TopP
+	}
+	if len(req.Stop) > 0 {
+		body["stop_sequences"] = req.Stop
+	}
+	if thinking := anthropicThinking(req.Reasoning); thinking != nil {
+		body["thinking"] = thinking
+	}
+	if len(req.Tools) > 0 {
+		body["tools"] = ConvertToolsToAnthropic(req.Tools)
+		if req.ToolChoice != "" {
+			body["tool_choice"] = AnthropicToolChoice(req.ToolChoice)
+		}
+	}
+	if req.UserID != "" {
+		body["metadata"] = map[string]any{"user_id": req.UserID}
+	}
+	return body
 }
 
 func (p *AnthropicProvider) setHeaders(r *http.Request, creds Credentials) {

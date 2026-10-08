@@ -18,6 +18,7 @@ type OllamaProvider struct {
 
 // NewOllama creates a new Ollama provider.
 func NewOllama(cfg Config) *OllamaProvider {
+	cfg = applyDefaultBaseURL("ollama", cfg)
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 120 * time.Second // local models can be slow to load
 	}

@@ -33,16 +33,23 @@ func (c *Client) GenerateImage(ctx context.Context, req *ImageRequest) (*ImageRe
 	})
 }
 
-// SynthesizeSpeech turns text into audio. Voice defaults to "alloy" and format
-// defaults to mp3 when the provider is OpenAI-compatible.
+// SynthesizeSpeech turns text into audio. OpenAI-compatible providers default
+// to voice "alloy" and mp3. Gemini defaults to voice "Kore" and wav, and can
+// speak multiple turns. A provider that cannot honor the requested format or
+// speaker list is skipped.
 func (c *Client) SynthesizeSpeech(ctx context.Context, req *SpeechRequest) (*SpeechResponse, error) {
-	if req == nil || strings.TrimSpace(req.Input) == "" {
+	if req == nil || (strings.TrimSpace(req.Input) == "" && len(req.Speakers) == 0) {
 		return nil, fmt.Errorf("speech input required")
 	}
-	if err := c.rejectMediaLimits(c.config.RequestPolicy.Limits.rejectText("speech input", len(req.Input))); err != nil {
+	textBytes := len(req.Input) + len(req.Instructions)
+	for _, turn := range req.Speakers {
+		textBytes += len(turn.Text) + len(turn.Style)
+	}
+	if err := c.rejectMediaLimits(c.config.RequestPolicy.Limits.rejectText("speech input", textBytes)); err != nil {
 		return nil, err
 	}
 	attempt := *req
+	attempt.Speakers = append([]SpeechTurn(nil), req.Speakers...)
 	return dispatch(c, ctx, req.Model, func(p providers.Provider, model string) (*SpeechResponse, error) {
 		synth, ok := p.(providers.SpeechSynthesizer)
 		if !ok {
@@ -50,6 +57,45 @@ func (c *Client) SynthesizeSpeech(ctx context.Context, req *SpeechRequest) (*Spe
 		}
 		attempt.Model = model
 		return synth.SynthesizeSpeech(ctx, &attempt)
+	})
+}
+
+// EditImage changes or extends source images. The retired variations endpoint
+// is not available; describe the variation in the edit prompt instead.
+func (c *Client) EditImage(ctx context.Context, req *ImageEditRequest) (*ImageResponse, error) {
+	if req == nil || strings.TrimSpace(req.Prompt) == "" {
+		return nil, fmt.Errorf("image prompt required")
+	}
+	if len(req.Images) == 0 {
+		return nil, fmt.Errorf("at least one source image required")
+	}
+	limits := c.config.RequestPolicy.Limits
+	if err := c.rejectMediaLimits(limits.rejectText("image prompt", len(req.Prompt))); err != nil {
+		return nil, err
+	}
+	mediaBytes := 0
+	for _, image := range req.Images {
+		mediaBytes += len(image.Data)
+	}
+	if req.Mask != nil {
+		mediaBytes += len(req.Mask.Data)
+	}
+	if err := c.rejectMediaLimits(limits.rejectMedia("image edit", mediaBytes)); err != nil {
+		return nil, err
+	}
+	attempt := *req
+	attempt.Images = append([]ImageInput(nil), req.Images...)
+	if req.Mask != nil {
+		mask := *req.Mask
+		attempt.Mask = &mask
+	}
+	return dispatch(c, ctx, req.Model, func(p providers.Provider, model string) (*ImageResponse, error) {
+		editor, ok := p.(providers.ImageEditor)
+		if !ok {
+			return nil, providers.Unsupported(p.Name(), "image editing")
+		}
+		attempt.Model = model
+		return editor.EditImage(ctx, &attempt)
 	})
 }
 
