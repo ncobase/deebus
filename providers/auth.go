@@ -9,6 +9,8 @@ import (
 type Credentials struct {
 	APIKey       string
 	BearerToken  string
+	AccessKey    string
+	Secret       string
 	Headers      map[string]string
 	Organization string
 	Project      string
@@ -26,6 +28,8 @@ func (c Config) credentials(ctx context.Context) (Credentials, error) {
 	creds := Credentials{
 		APIKey:       c.APIKey,
 		BearerToken:  c.BearerToken,
+		AccessKey:    c.AccessKey,
+		Secret:       c.Secret,
 		Headers:      cloneHeaders(c.Headers),
 		Organization: c.Organization,
 		Project:      c.Project,
@@ -48,6 +52,8 @@ func validateCredentialHeaders(creds Credentials) error {
 	return ValidateHeaderSafety(creds.Headers, map[string]string{
 		"apiKey":       creds.APIKey,
 		"bearerToken":  creds.BearerToken,
+		"accessKey":    creds.AccessKey,
+		"secret":       creds.Secret,
 		"organization": creds.Organization,
 		"project":      creds.Project,
 		"userProject":  creds.UserProject,
@@ -60,6 +66,12 @@ func mergeCredentials(dst *Credentials, src Credentials) {
 	}
 	if src.BearerToken != "" {
 		dst.BearerToken = src.BearerToken
+	}
+	if src.AccessKey != "" {
+		dst.AccessKey = src.AccessKey
+	}
+	if src.Secret != "" {
+		dst.Secret = src.Secret
 	}
 	if src.Organization != "" {
 		dst.Organization = src.Organization

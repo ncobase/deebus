@@ -21,6 +21,11 @@ var defaultBaseURLs = map[string]string{
 	"qwen":       "https://dashscope.aliyuncs.com/compatible-mode/v1",
 	"qwen-intl":  "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
 	"perplexity": "https://api.perplexity.ai",
+	"zhipu":      "https://open.bigmodel.cn/api/paas/v4",
+	"kling":      "https://api.klingai.com",
+	"doubao":     "https://ark.cn-beijing.volces.com/api/v3",
+	"hunyuan":    "https://hunyuan.tencentcloudapi.com",
+	"jimeng":     "https://visual.volcengineapi.com",
 }
 
 // DefaultBaseURL returns the official base URL for a built-in provider type.

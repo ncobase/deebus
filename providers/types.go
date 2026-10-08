@@ -32,6 +32,8 @@ type Provider interface {
 type Config struct {
 	APIKey             string
 	BearerToken        string
+	AccessKey          string
+	Secret             string
 	BaseURL            string
 	APIMode            string
 	Timeout            time.Duration
@@ -40,6 +42,7 @@ type Config struct {
 	Project            string
 	UserProject        string
 	APIVersion         string
+	Region             string
 	CredentialProvider CredentialProvider
 }
 

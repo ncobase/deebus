@@ -56,17 +56,7 @@ func newOpenAIProvider(name, compat string, cfg Config) *OpenAIProvider {
 	}
 }
 
-func (p *OpenAIProvider) Name() string {
-	if p.name == "" {
-		return "openai"
-	}
-	return p.name
-}
-
-func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
-	if normalizeAPIMode(p.cfg.APIMode) == "responses" {
-		return p.completeResponses(ctx, req)
-	}
+func openAIChatBody(req *Request) (map[string]any, error) {
 	body := map[string]any{
 		"model":    req.Model,
 		"messages": ConvertToOpenAIFormat(req.Messages),
@@ -104,7 +94,24 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 			body["prompt_cache_retention"] = retention
 		}
 	}
+	return body, nil
+}
 
+func (p *OpenAIProvider) Name() string {
+	if p.name == "" {
+		return "openai"
+	}
+	return p.name
+}
+
+func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
+	if normalizeAPIMode(p.cfg.APIMode) == "responses" {
+		return p.completeResponses(ctx, req)
+	}
+	body, err := openAIChatBody(req)
+	if err != nil {
+		return nil, err
+	}
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -729,15 +736,24 @@ func (p *OpenAIProvider) azureV1Endpoint(suffix string) (string, error) {
 // wirePath maps the client's OpenAI paths onto a provider's official routes.
 // Perplexity chat is POST /chat/completions on https://api.perplexity.ai.
 func (p *OpenAIProvider) wirePath(openaiPath string) string {
-	if p.name != "perplexity" {
-		return openaiPath
+	switch p.name {
+	case "perplexity":
+		if openaiPath == "/v1/chat/completions" {
+			return "/chat/completions"
+		}
+	case "zhipu", "doubao":
+		switch openaiPath {
+		case "/v1/chat/completions":
+			return "/chat/completions"
+		case "/v1/embeddings":
+			return "/embeddings"
+		case "/v1/images/generations":
+			if p.name == "doubao" {
+				return "/images/generations"
+			}
+		}
 	}
-	switch openaiPath {
-	case "/v1/chat/completions":
-		return "/chat/completions"
-	default:
-		return openaiPath
-	}
+	return openaiPath
 }
 
 func (p *OpenAIProvider) completeResponses(ctx context.Context, req *Request) (*Response, error) {

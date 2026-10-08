@@ -70,6 +70,8 @@ type ProviderConfig struct {
 	Type               string             `yaml:"type"`
 	APIKey             string             `yaml:"apiKey"`
 	BearerToken        string             `yaml:"bearerToken"`
+	AccessKey          string             `yaml:"accessKey"`
+	Secret             string             `yaml:"secret"`
 	BaseURL            string             `yaml:"baseURL"`
 	APIMode            string             `yaml:"apiMode"`
 	Headers            map[string]string  `yaml:"headers"`
@@ -77,6 +79,7 @@ type ProviderConfig struct {
 	Project            string             `yaml:"project"`
 	UserProject        string             `yaml:"userProject"`
 	APIVersion         string             `yaml:"apiVersion"`
+	Region             string             `yaml:"region"`
 	CredentialProvider CredentialProvider `yaml:"-"`
 }
 
@@ -138,19 +141,16 @@ func (c *Config) Validate() error {
 		if err := providers.ValidateHeaderSafety(cfg.Headers, map[string]string{
 			"apiKey":       cfg.APIKey,
 			"bearerToken":  cfg.BearerToken,
+			"accessKey":    cfg.AccessKey,
+			"secret":       cfg.Secret,
 			"organization": cfg.Organization,
 			"project":      cfg.Project,
 			"userProject":  cfg.UserProject,
 		}); err != nil {
 			return fmt.Errorf("provider %q: %w", name, err)
 		}
-		// Ollama is a local service and does not require authentication.
-		if cfg.Type != "ollama" &&
-			cfg.APIKey == "" &&
-			cfg.BearerToken == "" &&
-			cfg.CredentialProvider == nil &&
-			len(cfg.Headers) == 0 {
-			return fmt.Errorf("provider %q: apiKey, bearerToken, credentialProvider, or headers required", name)
+		if err := providers.ValidateAuth(cfg.Type, cfg.APIKey, cfg.BearerToken, cfg.AccessKey, cfg.Secret, cfg.Headers, cfg.CredentialProvider != nil); err != nil {
+			return fmt.Errorf("provider %q: %w", name, err)
 		}
 	}
 	if err := c.validateModelRef("primary", c.Primary); err != nil {
@@ -555,6 +555,8 @@ func buildProvider(
 	pcfg := providers.Config{
 		APIKey:             cfg.APIKey,
 		BearerToken:        cfg.BearerToken,
+		AccessKey:          cfg.AccessKey,
+		Secret:             cfg.Secret,
 		BaseURL:            providers.ResolveBaseURL(cfg.Type, cfg.BaseURL),
 		APIMode:            cfg.APIMode,
 		Timeout:            timeout,
@@ -563,6 +565,7 @@ func buildProvider(
 		Project:            cfg.Project,
 		UserProject:        cfg.UserProject,
 		APIVersion:         cfg.APIVersion,
+		Region:             cfg.Region,
 		CredentialProvider: cfg.CredentialProvider,
 	}
 

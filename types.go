@@ -27,6 +27,17 @@ type (
 	RerankResult       = providers.RerankResult
 	RerankResponse     = providers.RerankResponse
 	TokenCount         = providers.TokenCount
+	OperationKind      = providers.OperationKind
+	OperationStatus    = providers.OperationStatus
+	OperationRequest   = providers.OperationRequest
+	Operation          = providers.Operation
+	OperationResult    = providers.OperationResult
+	OperationAsset     = providers.OperationAsset
+	MediaAsset         = providers.MediaAsset
+	BatchItem          = providers.BatchItem
+	BatchRequest       = providers.BatchRequest
+	Batch              = providers.Batch
+	BatchResult        = providers.BatchResult
 	ProviderFactory    = providers.Factory
 
 	// Cache types.
@@ -61,11 +72,18 @@ type (
 
 // Message constructors expose providers helpers through the root package.
 var (
-	TextMessage       = providers.TextMessage
-	ImageMessage      = providers.ImageMessage
-	AudioMessage      = providers.AudioMessage
-	DocumentMessage   = providers.DocumentMessage
-	AssistantMessage  = providers.AssistantMessage
-	ToolResultMessage = providers.ToolResultMessage
-	RegisterProvider  = providers.Register
+	TextMessage        = providers.TextMessage
+	ImageMessage       = providers.ImageMessage
+	AudioMessage       = providers.AudioMessage
+	DocumentMessage    = providers.DocumentMessage
+	AssistantMessage   = providers.AssistantMessage
+	ToolResultMessage  = providers.ToolResultMessage
+	RegisterProvider   = providers.Register
+	OperationImage     = providers.OperationImage
+	OperationVideo     = providers.OperationVideo
+	OperationQueued    = providers.OperationQueued
+	OperationRunning   = providers.OperationRunning
+	OperationSucceeded = providers.OperationSucceeded
+	OperationFailed    = providers.OperationFailed
+	OperationCancelled = providers.OperationCancelled
 )

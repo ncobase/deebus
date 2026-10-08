@@ -81,6 +81,29 @@ func TestConfigValidate(t *testing.T) {
 			c.Primary = "qwen/qwen-plus"
 			c.Providers = map[string]ProviderConfig{"qwen": {Type: "qwen", APIKey: "k"}}
 		}, false},
+		{"kling access key", func(c *Config) {
+			c.Primary = "kling/kling-v1"
+			c.Providers = map[string]ProviderConfig{"kling": {Type: "kling", AccessKey: "ak", Secret: "sek"}}
+		}, false},
+		{"kling rejects api key", func(c *Config) {
+			c.Primary = "kling/kling-v1"
+			c.Providers = map[string]ProviderConfig{"kling": {Type: "kling", APIKey: "sk"}}
+		}, true},
+		{"openai rejects access key", func(c *Config) {
+			c.Providers["openai"] = ProviderConfig{Type: "openai", AccessKey: "ak", Secret: "sek"}
+		}, true},
+		{"hunyuan access key", func(c *Config) {
+			c.Primary = "hunyuan/hunyuan-turbo"
+			c.Providers = map[string]ProviderConfig{"hunyuan": {Type: "hunyuan", AccessKey: "AKID", Secret: "sek"}}
+		}, false},
+		{"doubao api key", func(c *Config) {
+			c.Primary = "doubao/doubao-pro"
+			c.Providers = map[string]ProviderConfig{"doubao": {Type: "doubao", APIKey: "ark"}}
+		}, false},
+		{"jimeng access key", func(c *Config) {
+			c.Primary = "jimeng/jimeng_t2i_v40"
+			c.Providers = map[string]ProviderConfig{"jimeng": {Type: "jimeng", AccessKey: "AK", Secret: "sek"}}
+		}, false},
 		{"no providers", func(c *Config) { c.Providers = nil }, true},
 		{"missing type", func(c *Config) { c.Providers["openai"] = ProviderConfig{APIKey: "k", BaseURL: "https://x.com"} }, true},
 		{"missing apiKey", func(c *Config) { c.Providers["openai"] = ProviderConfig{Type: "openai", BaseURL: "https://x.com"} }, true},
