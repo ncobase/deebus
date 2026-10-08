@@ -76,6 +76,7 @@ type ProviderConfig struct {
 	Organization       string             `yaml:"organization"`
 	Project            string             `yaml:"project"`
 	UserProject        string             `yaml:"userProject"`
+	APIVersion         string             `yaml:"apiVersion"`
 	CredentialProvider CredentialProvider `yaml:"-"`
 }
 
@@ -178,8 +179,8 @@ func validateProviderAPIMode(name string, cfg ProviderConfig) error {
 	if mode == "" {
 		return nil
 	}
-	if cfg.Type != "openai" {
-		return fmt.Errorf("provider %q: apiMode is supported only for openai", name)
+	if !providers.AllowsAPIMode(cfg.Type) {
+		return fmt.Errorf("provider %q: apiMode is supported only for openai-compatible providers", name)
 	}
 	switch mode {
 	case "chat_completions", "responses":
@@ -560,23 +561,13 @@ func buildProvider(
 		Organization:       cfg.Organization,
 		Project:            cfg.Project,
 		UserProject:        cfg.UserProject,
+		APIVersion:         cfg.APIVersion,
 		CredentialProvider: cfg.CredentialProvider,
 	}
 
-	var p providers.Provider
-	switch cfg.Type {
-	case "openai":
-		p = providers.NewOpenAI(pcfg)
-	case "anthropic":
-		p = providers.NewAnthropic(pcfg)
-	case "gemini":
-		p = providers.NewGemini(pcfg)
-	case "ollama":
-		p = providers.NewOllama(pcfg)
-	case "cohere":
-		p = providers.NewCohere(pcfg)
-	default:
-		return nil, fmt.Errorf("unknown provider type %q", cfg.Type)
+	p, err := providers.New(cfg.Type, pcfg)
+	if err != nil {
+		return nil, err
 	}
 
 	// Layer 1: rate limiter.

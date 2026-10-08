@@ -7,29 +7,66 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
 
+const defaultAzureAPIVersion = "2024-10-21"
+
 // OpenAIProvider implements Provider for the OpenAI Chat Completions API and
-// any compatible endpoint (Azure OpenAI, DeepSeek, Mistral, etc.).
+// any compatible endpoint (Azure OpenAI, DeepSeek, Mistral, Groq, xAI, etc.).
 type OpenAIProvider struct {
 	cfg    Config
 	client *http.Client
+	name   string
+	compat string // "azure" selects Azure OpenAI deployment URLs and api-key auth
 }
 
-// NewOpenAI creates a new OpenAI-compatible provider.
+// NewOpenAI creates a provider for the official OpenAI API and compatible gateways.
 func NewOpenAI(cfg Config) *OpenAIProvider {
+	return newOpenAIProvider("openai", "", cfg)
+}
+
+// NewOpenAICompatible creates an OpenAI-wire provider with its own name.
+// Use it for Groq, DeepSeek, Mistral, xAI, Together, OpenRouter, and similar APIs.
+func NewOpenAICompatible(name string, cfg Config) *OpenAIProvider {
+	return newOpenAIProvider(name, "", cfg)
+}
+
+// NewAzure creates an Azure OpenAI provider. Model names are deployment names.
+// Set Config.APIVersion to override the default API version.
+func NewAzure(cfg Config) *OpenAIProvider {
+	return newOpenAIProvider("azure", "azure", cfg)
+}
+
+func newOpenAIProvider(name, compat string, cfg Config) *OpenAIProvider {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
 	}
-	return &OpenAIProvider{cfg: cfg, client: newHTTPClient(cfg.Timeout)}
+	if strings.TrimSpace(name) == "" {
+		name = "openai"
+	}
+	return &OpenAIProvider{
+		cfg:    cfg,
+		client: newHTTPClient(cfg.Timeout),
+		name:   name,
+		compat: compat,
+	}
 }
 
-func (p *OpenAIProvider) Name() string { return "openai" }
+func (p *OpenAIProvider) Name() string {
+	if p.name == "" {
+		return "openai"
+	}
+	return p.name
+}
 
 func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
 	if normalizeAPIMode(p.cfg.APIMode) == "responses" {
+		if p.compat == "azure" {
+			return nil, unsupportedCapability(p.Name(), "responses API")
+		}
 		return p.completeResponses(ctx, req)
 	}
 	body := map[string]any{
@@ -75,7 +112,7 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/chat/completions")
+	endpoint, err := p.openAIEndpoint(req.Model, "/v1/chat/completions")
 	if err != nil {
 		return nil, err
 	}
@@ -204,6 +241,9 @@ func (p *OpenAIProvider) completeFromSSE(ctx context.Context, req *Request, body
 
 func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
 	if normalizeAPIMode(p.cfg.APIMode) == "responses" {
+		if p.compat == "azure" {
+			return nil, unsupportedCapability(p.Name(), "responses API")
+		}
 		return p.streamResponses(ctx, req)
 	}
 	body := map[string]any{
@@ -251,7 +291,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/chat/completions")
+	endpoint, err := p.openAIEndpoint(req.Model, "/v1/chat/completions")
 	if err != nil {
 		return nil, err
 	}
@@ -498,7 +538,7 @@ func (p *OpenAIProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/embeddings")
+	endpoint, err := p.openAIEndpoint(req.Model, "/v1/embeddings")
 	if err != nil {
 		return nil, err
 	}
@@ -564,7 +604,7 @@ func normalizeOpenAICacheRetention(retention string) (string, error) {
 }
 
 func (p *OpenAIProvider) ListModels(ctx context.Context) ([]string, error) {
-	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/models")
+	endpoint, err := p.openAIEndpoint("", "/v1/models")
 	if err != nil {
 		return nil, err
 	}
@@ -597,7 +637,7 @@ func (p *OpenAIProvider) ListModels(ctx context.Context) ([]string, error) {
 }
 
 func (p *OpenAIProvider) Health(ctx context.Context) error {
-	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/models")
+	endpoint, err := p.openAIEndpoint("", "/v1/models")
 	if err != nil {
 		return err
 	}
@@ -617,10 +657,18 @@ func (p *OpenAIProvider) Health(ctx context.Context) error {
 }
 
 func (p *OpenAIProvider) setHeaders(r *http.Request, creds Credentials) {
-	r.Header.Set("Content-Type", "application/json")
+	if r.Header.Get("Content-Type") == "" {
+		r.Header.Set("Content-Type", "application/json")
+	}
+	p.setAuth(r, creds)
+}
+
+func (p *OpenAIProvider) setAuth(r *http.Request, creds Credentials) {
 	switch {
 	case creds.BearerToken != "":
 		r.Header.Set("Authorization", "Bearer "+creds.BearerToken)
+	case p.compat == "azure" && creds.APIKey != "":
+		r.Header.Set("api-key", creds.APIKey)
 	case creds.APIKey != "":
 		r.Header.Set("Authorization", "Bearer "+creds.APIKey)
 	}
@@ -633,13 +681,46 @@ func (p *OpenAIProvider) setHeaders(r *http.Request, creds Credentials) {
 	applyHeaders(r, creds.Headers)
 }
 
+func (p *OpenAIProvider) openAIEndpoint(model, openaiPath string) (string, error) {
+	if p.compat != "azure" {
+		return buildProviderEndpoint(p.cfg.BaseURL, openaiPath)
+	}
+	version := strings.TrimSpace(p.cfg.APIVersion)
+	if version == "" {
+		version = defaultAzureAPIVersion
+	}
+	var path string
+	switch openaiPath {
+	case "/v1/models":
+		path = "/openai/models"
+	default:
+		if strings.TrimSpace(model) == "" {
+			return "", fmt.Errorf("azure deployment name required")
+		}
+		suffix := strings.TrimPrefix(openaiPath, "/v1/")
+		path = "/openai/deployments/" + url.PathEscape(model) + "/" + suffix
+	}
+	base, err := buildProviderEndpoint(p.cfg.BaseURL, path)
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	query := u.Query()
+	query.Set("api-version", version)
+	u.RawQuery = query.Encode()
+	return u.String(), nil
+}
+
 func (p *OpenAIProvider) completeResponses(ctx context.Context, req *Request) (*Response, error) {
 	body := p.responsesBody(req, false)
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
-	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/responses")
+	endpoint, err := p.openAIEndpoint(req.Model, "/v1/responses")
 	if err != nil {
 		return nil, err
 	}
@@ -676,7 +757,7 @@ func (p *OpenAIProvider) streamResponses(ctx context.Context, req *Request) (<-c
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
-	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/responses")
+	endpoint, err := p.openAIEndpoint(req.Model, "/v1/responses")
 	if err != nil {
 		return nil, err
 	}

@@ -71,7 +71,9 @@ attempt. Each fallback attempt starts from a fresh deep clone of the caller's
 request, so provider-specific mutations never leak back to the original
 request or across fallback providers. `Client.Embed` applies
 `Limits.MaxTextBytes` to the embedding inputs and records the call in
-`Client.Stats`.
+`Client.Stats`. `GenerateImage`, `SynthesizeSpeech`, `Transcribe`, and `Rerank`
+use the same fallback chain. Text limits apply to prompts, speech input, and
+rerank documents. `MaxMediaBytes` applies to transcription audio.
 
 ## Reports
 

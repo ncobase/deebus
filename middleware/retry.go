@@ -30,6 +30,27 @@ func NewRetry(p providers.Provider, maxRetries int) *RetryMiddleware {
 	}
 }
 
+func retryValue[T any](m *RetryMiddleware, ctx context.Context, call func() (T, error)) (T, error) {
+	var zero T
+	var lastErr error
+	for attempt := 0; attempt <= m.maxRetries; attempt++ {
+		resp, err := call()
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !providers.IsRetryable(err) {
+			return zero, err
+		}
+		if attempt < m.maxRetries {
+			if err := sleepWithContext(ctx, m.backoff(attempt, retryAfter(err))); err != nil {
+				return zero, err
+			}
+		}
+	}
+	return zero, lastErr
+}
+
 func (m *RetryMiddleware) Name() string { return m.provider.Name() }
 
 func (m *RetryMiddleware) Complete(ctx context.Context, req *providers.Request) (*providers.Response, error) {

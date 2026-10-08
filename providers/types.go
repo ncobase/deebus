@@ -39,6 +39,7 @@ type Config struct {
 	Organization       string
 	Project            string
 	UserProject        string
+	APIVersion         string
 	CredentialProvider CredentialProvider
 }
 

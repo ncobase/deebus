@@ -62,6 +62,27 @@ func (l RequestLimits) Validate(req *Request) error {
 	return nil
 }
 
+func (l RequestLimits) rejectText(kind string, size int) error {
+	if l.MaxTextBytes > 0 && size > l.MaxTextBytes {
+		return fmt.Errorf("request limits: %s bytes=%d exceeds maxTextBytes=%d", kind, size, l.MaxTextBytes)
+	}
+	return nil
+}
+
+func (l RequestLimits) rejectMedia(kind string, size int) error {
+	if l.MaxMediaBytes > 0 && size > l.MaxMediaBytes {
+		return fmt.Errorf("request limits: %s bytes=%d exceeds maxMediaBytes=%d", kind, size, l.MaxMediaBytes)
+	}
+	return nil
+}
+
+func (l RequestLimits) rejectCount(kind string, count int) error {
+	if l.MaxMessages > 0 && count > l.MaxMessages {
+		return fmt.Errorf("request limits: %s=%d exceeds maxMessages=%d", kind, count, l.MaxMessages)
+	}
+	return nil
+}
+
 // ValidateEmbed applies the text-size guard to embedding inputs.
 // Other limits apply only to chat requests.
 func (l RequestLimits) ValidateEmbed(req *EmbedRequest) error {

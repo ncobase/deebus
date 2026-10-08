@@ -12,7 +12,7 @@
 
 | Feature                     | Details                                                                                                                                  |
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Multi-provider**          | OpenAI, Anthropic, Google Gemini, Ollama, Cohere                                                                                         |
+| **Multi-provider**          | OpenAI, Azure OpenAI, Anthropic, Gemini, Ollama, Cohere, plus OpenAI-compatible Groq, DeepSeek, Mistral, xAI, Together, OpenRouter, Fireworks, and Perplexity |
 | **Smart fallback**          | Primary -> fallbacks in order; HTTP 400 is never retried or fallen back                                                                  |
 | **Retry with jitter**       | Equal-jitter exponential backoff; honours `Retry-After` on 429                                                                           |
 | **Circuit breaker**         | Closed -> Open -> Half-open state machine per provider                                                                                   |
@@ -26,6 +26,9 @@
 | **Gateway governance**      | Optional request policy, prompt-cache key injection, cache-breaker rewrites, safe snapshots, stream aggregation, and cost estimates       |
 | **Multimodal**              | Text, images (URL / base64), audio, PDF documents                                                                                        |
 | **Embeddings**              | OpenAI, Gemini, Ollama, Cohere                                                                                                           |
+| **Image generation**        | OpenAI-compatible images API and Gemini native image output                                                                              |
+| **Speech**                  | OpenAI-compatible text-to-speech and transcription                                                                                       |
+| **Rerank**                  | Cohere document reranking                                                                                                                |
 | **Structured outputs**      | JSON object / JSON Schema response formats mapped across OpenAI, Gemini, Ollama, and Cohere                                  |
 | **Structured logging**      | Pluggable `Logger` interface; defaults to no-op                                                                                          |
 | **Usage statistics**        | Per-request input/output/cache token counters; ReasoningTokens for o-series/thinking models; aggregate Stats with cache hit/write totals |
@@ -118,11 +121,12 @@ func main() {
 
 | Field          | Type   | Required | Description                                                                                    |
 | -------------- | ------ | -------- | ---------------------------------------------------------------------------------------------- |
-| `type`         | string | Yes      | One of `openai`, `anthropic`, `gemini`, `ollama`, `cohere`                                     |
+| `type`         | string | Yes      | Built-in: `openai`, `azure`, `anthropic`, `gemini`, `ollama`, `cohere`, `groq`, `deepseek`, `mistral`, `xai`, `together`, `openrouter`, `fireworks`, `perplexity`. Add more with `RegisterProvider`. |
 | `apiKey`       | string | Yes\*    | API key. Optional when `bearerToken`, `headers`, or `CredentialProvider` supplies credentials. |
 | `bearerToken`  | string | -        | Static bearer token for OAuth-style or proxy auth                                              |
 | `baseURL`      | string | Yes      | `https://` anywhere, or `http://` only for the exact hosts `localhost`, `127.0.0.1`, `::1`, and `0.0.0.0` |
-| `apiMode`      | string | -        | OpenAI only: `chat_completions` default or `responses` for the modern Responses API            |
+| `apiMode`      | string | -        | OpenAI-compatible providers: `chat_completions` (default) or `responses`                        |
+| `apiVersion`   | string | -        | Azure OpenAI API version. Default `2024-10-21`                                                 |
 | `headers`      | map    | -        | Extra static headers sent on every request                                                     |
 | `organization` | string | -        | OpenAI `OpenAI-Organization` header                                                            |
 | `project`      | string | -        | OpenAI `OpenAI-Project` header                                                                 |
@@ -576,12 +580,60 @@ resp, err := client.Embed(ctx, &deebus.EmbedRequest{
 fmt.Printf("%d vectors of dim %d\n", len(resp.Embeddings), len(resp.Embeddings[0]))
 ```
 
-Supported by OpenAI, Gemini, Ollama, and Cohere. Successful and failed
+Supported by OpenAI, Gemini, Ollama, and Cohere. OpenAI-compatible provider
+types use the same wire protocol. Successful and failed
 embedding calls are included in `Client.Stats`. Input tokens are recorded from
 `EmbedResponse.TokensUsed`. When `RequestPolicy.Limits.MaxTextBytes` is set,
 embedding inputs are rejected before any provider call.
 
 ---
+
+## Images, Speech, and Rerank
+
+These calls use the same provider chain as chat. Set `Model` to `provider/model`
+when the media model differs from the chat primary.
+
+```go
+image, err := client.GenerateImage(ctx, &deebus.ImageRequest{
+    Model:          "openai/gpt-image-1",
+    Prompt:         "a red boat on a calm lake",
+    Size:           "1024x1024",
+    ResponseFormat: "b64_json",
+})
+
+speech, err := client.SynthesizeSpeech(ctx, &deebus.SpeechRequest{
+    Model: "openai/tts-1",
+    Input: "Hello from deebus.",
+    Voice: "alloy",
+})
+
+transcript, err := client.Transcribe(ctx, &deebus.TranscribeRequest{
+    Model: "openai/whisper-1",
+    Data:  audioBytes,
+})
+
+ranked, err := client.Rerank(ctx, &deebus.RerankRequest{
+    Model:     "cohere/rerank-v3.5",
+    Query:     "how does fallback work?",
+    Documents: []string{"circuit breakers", "provider fallback"},
+})
+```
+
+Gemini image models return inline images. Azure deployments use `api-key` auth
+and deployment URLs; the model name is the deployment name. Groq, DeepSeek,
+Mistral, xAI, Together, OpenRouter, Fireworks, and Perplexity are OpenAI-wire
+providers. A provider that does not implement a capability is skipped so the
+next fallback can answer.
+
+Register another OpenAI-compatible backend before creating a client:
+
+```go
+import "github.com/ncobase/deebus/providers"
+
+deebus.RegisterProvider("myproxy", func(cfg providers.Config) providers.Provider {
+    return providers.NewOpenAICompatible("myproxy", cfg)
+})
+```
 
 ## Model Catalog
 
@@ -796,7 +848,7 @@ Both helpers walk the error chain, so they work correctly with wrapped errors.
 - `errors.go`: `IsRetryable`, `IsFallback`
 - `logger.go`: `Logger`, `NoopLogger`, `sharedLogger`
 - `stats.go`: atomic request and token counters
-- `providers/`: provider implementations, wire-format helpers, cache types, and auth/error handling
+- `providers/`: provider implementations, registry, media APIs, wire-format helpers, cache types, and auth/error handling
 - `mcp/`: MCP client, transports, protocol types, and tool conversion
 - `middleware/`: logging, retry, rate limit, and circuit breaker layers
 - `internal/`: shared circuit breaker and logger internals

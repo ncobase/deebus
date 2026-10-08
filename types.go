@@ -13,6 +13,17 @@ type (
 	StreamChunk        = providers.StreamChunk
 	EmbedRequest       = providers.EmbedRequest
 	EmbedResponse      = providers.EmbedResponse
+	ImageRequest       = providers.ImageRequest
+	Image              = providers.Image
+	ImageResponse      = providers.ImageResponse
+	SpeechRequest      = providers.SpeechRequest
+	SpeechResponse     = providers.SpeechResponse
+	TranscribeRequest  = providers.TranscribeRequest
+	TranscribeResponse = providers.TranscribeResponse
+	RerankRequest      = providers.RerankRequest
+	RerankResult       = providers.RerankResult
+	RerankResponse     = providers.RerankResponse
+	ProviderFactory    = providers.Factory
 
 	// Cache types.
 	CacheControl       = providers.CacheControl
@@ -52,4 +63,5 @@ var (
 	DocumentMessage   = providers.DocumentMessage
 	AssistantMessage  = providers.AssistantMessage
 	ToolResultMessage = providers.ToolResultMessage
+	RegisterProvider  = providers.Register
 )
