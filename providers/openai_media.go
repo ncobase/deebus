@@ -11,6 +11,7 @@ import (
 	"strings"
 )
 
+// GenerateImage calls POST /v1/images/generations.
 func (p *OpenAIProvider) GenerateImage(ctx context.Context, req *ImageRequest) (*ImageResponse, error) {
 	if req == nil || strings.TrimSpace(req.Prompt) == "" {
 		return nil, fmt.Errorf("image prompt required")
@@ -59,6 +60,7 @@ func (p *OpenAIProvider) GenerateImage(ctx context.Context, req *ImageRequest) (
 	return &ImageResponse{Images: images, Model: req.Model, Provider: p.Name()}, nil
 }
 
+// SynthesizeSpeech calls POST /v1/audio/speech. Voice defaults to alloy and format to mp3.
 func (p *OpenAIProvider) SynthesizeSpeech(ctx context.Context, req *SpeechRequest) (*SpeechResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("speech request required")
@@ -101,6 +103,7 @@ func (p *OpenAIProvider) SynthesizeSpeech(ctx context.Context, req *SpeechReques
 	}, nil
 }
 
+// EditImage calls POST /v1/images/edits using the current JSON image contract.
 func (p *OpenAIProvider) EditImage(ctx context.Context, req *ImageEditRequest) (*ImageResponse, error) {
 	if req == nil || strings.TrimSpace(req.Prompt) == "" {
 		return nil, fmt.Errorf("image prompt required")
@@ -193,6 +196,7 @@ func openAIImageRef(image ImageInput) (map[string]string, error) {
 	}
 }
 
+// Transcribe calls POST /v1/audio/transcriptions with a multipart audio file.
 func (p *OpenAIProvider) Transcribe(ctx context.Context, req *TranscribeRequest) (*TranscribeResponse, error) {
 	if req == nil || len(req.Data) == 0 {
 		return nil, fmt.Errorf("audio data required")

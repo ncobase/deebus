@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+// GenerateImage calls generateContent with image response modalities.
 func (p *GeminiProvider) GenerateImage(ctx context.Context, req *ImageRequest) (*ImageResponse, error) {
 	if req == nil || strings.TrimSpace(req.Prompt) == "" {
 		return nil, fmt.Errorf("image prompt required")
@@ -31,6 +32,7 @@ func (p *GeminiProvider) GenerateImage(ctx context.Context, req *ImageRequest) (
 	return &ImageResponse{Images: imagesFromGemini(payload), Model: req.Model, Provider: p.Name()}, nil
 }
 
+// EditImage calls generateContent with the source image inline and image output.
 func (p *GeminiProvider) EditImage(ctx context.Context, req *ImageEditRequest) (*ImageResponse, error) {
 	if req == nil || strings.TrimSpace(req.Prompt) == "" {
 		return nil, fmt.Errorf("image prompt required")

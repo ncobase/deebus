@@ -11,9 +11,8 @@ import (
 // CircuitBreakerMiddleware wraps a provider with circuit breaker protection.
 // When the provider fails consistently, the circuit opens and requests are
 // rejected immediately (with Fallback=true) until the reset timeout elapses.
-//
-// Note: auth errors (401/403) do not trip the circuit because they are
-// configuration issues, not provider health indicators.
+// Auth errors (401/403) and client errors (400) do not trip the circuit.
+// Health does not open or probe the breaker.
 type CircuitBreakerMiddleware struct {
 	provider providers.Provider
 	breaker  *circuit.Breaker
@@ -27,6 +26,7 @@ func NewCircuitBreaker(p providers.Provider, cfg circuit.Config) *CircuitBreaker
 	}
 }
 
+// Name returns the wrapped provider name.
 func (m *CircuitBreakerMiddleware) Name() string { return m.provider.Name() }
 
 func (m *CircuitBreakerMiddleware) Complete(ctx context.Context, req *providers.Request) (*providers.Response, error) {
@@ -56,6 +56,7 @@ func (m *CircuitBreakerMiddleware) Embed(ctx context.Context, req *providers.Emb
 	return resp, err
 }
 
+// Health forwards the check and does not change the circuit state.
 func (m *CircuitBreakerMiddleware) Health(ctx context.Context) error {
 	return m.provider.Health(ctx)
 }

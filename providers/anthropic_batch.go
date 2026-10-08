@@ -11,6 +11,7 @@ import (
 	"strings"
 )
 
+// SubmitBatch calls POST /v1/messages/batches.
 func (p *AnthropicProvider) SubmitBatch(ctx context.Context, req *BatchRequest) (*Batch, error) {
 	if req == nil || len(req.Items) == 0 {
 		return nil, fmt.Errorf("batch items required")
@@ -36,6 +37,7 @@ func (p *AnthropicProvider) SubmitBatch(ctx context.Context, req *BatchRequest) 
 	return p.anthropicBatch(ctx, http.MethodPost, "/v1/messages/batches", data)
 }
 
+// GetBatch calls GET /v1/messages/batches/{id}.
 func (p *AnthropicProvider) GetBatch(ctx context.Context, id string) (*Batch, error) {
 	if err := validOperationID(id); err != nil {
 		return nil, err
@@ -43,6 +45,7 @@ func (p *AnthropicProvider) GetBatch(ctx context.Context, id string) (*Batch, er
 	return p.anthropicBatch(ctx, http.MethodGet, "/v1/messages/batches/"+url.PathEscape(id), nil)
 }
 
+// CancelBatch calls POST /v1/messages/batches/{id}/cancel.
 func (p *AnthropicProvider) CancelBatch(ctx context.Context, id string) error {
 	if err := validOperationID(id); err != nil {
 		return err
@@ -51,6 +54,7 @@ func (p *AnthropicProvider) CancelBatch(ctx context.Context, id string) error {
 	return err
 }
 
+// ReadBatch calls GET /v1/messages/batches/{id}/results.
 func (p *AnthropicProvider) ReadBatch(ctx context.Context, id string) ([]BatchResult, error) {
 	if err := validOperationID(id); err != nil {
 		return nil, err

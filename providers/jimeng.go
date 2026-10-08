@@ -39,28 +39,35 @@ func NewJimeng(cfg Config) *JimengProvider {
 	return &JimengProvider{cfg: cfg, client: newHTTPClient(cfg.Timeout)}
 }
 
+// Name returns "jimeng".
 func (p *JimengProvider) Name() string { return "jimeng" }
 
+// Complete reports that this provider has no chat API.
 func (p *JimengProvider) Complete(context.Context, *Request) (*Response, error) {
 	return nil, unsupportedCapability(p.Name(), "chat completions")
 }
 
+// Stream reports that this provider has no chat API.
 func (p *JimengProvider) Stream(context.Context, *Request) (<-chan *StreamChunk, error) {
 	return nil, unsupportedCapability(p.Name(), "chat completions")
 }
 
+// Embed reports that this provider has no embeddings API.
 func (p *JimengProvider) Embed(context.Context, *EmbedRequest) (*EmbedResponse, error) {
 	return nil, unsupportedCapability(p.Name(), "embeddings")
 }
 
+// ListModels reports that this provider has no model list.
 func (p *JimengProvider) ListModels(context.Context) ([]string, error) {
 	return nil, unsupportedTargeted(p.Name(), "model listing")
 }
 
+// Health reports that this provider has no health endpoint.
 func (p *JimengProvider) Health(context.Context) error {
 	return unsupportedTargeted(p.Name(), "health checks")
 }
 
+// SubmitOperation calls CVSync2AsyncSubmitTask.
 func (p *JimengProvider) SubmitOperation(ctx context.Context, req *OperationRequest) (*Operation, error) {
 	if req == nil || strings.TrimSpace(req.Prompt) == "" {
 		return nil, fmt.Errorf("operation prompt required")
@@ -100,6 +107,7 @@ func (p *JimengProvider) SubmitOperation(ctx context.Context, req *OperationRequ
 	}, nil
 }
 
+// GetOperation calls CVSync2AsyncGetResult.
 func (p *JimengProvider) GetOperation(ctx context.Context, id string) (*Operation, error) {
 	reqKey, taskID, err := splitJimengID(id)
 	if err != nil {
@@ -119,10 +127,12 @@ func (p *JimengProvider) GetOperation(ctx context.Context, id string) (*Operatio
 	return op, nil
 }
 
+// CancelOperation reports that the visual API has no official cancel method.
 func (p *JimengProvider) CancelOperation(context.Context, string) error {
 	return unsupportedTargeted(p.Name(), "operation cancel")
 }
 
+// ReadOperation downloads the result URL without attaching the access key.
 func (p *JimengProvider) ReadOperation(ctx context.Context, id string) (*OperationAsset, error) {
 	op, err := p.GetOperation(ctx, id)
 	if err != nil {

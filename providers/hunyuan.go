@@ -34,8 +34,10 @@ func NewHunyuan(cfg Config) *HunyuanProvider {
 	return &HunyuanProvider{cfg: cfg, client: newHTTPClient(cfg.Timeout)}
 }
 
+// Name returns "hunyuan".
 func (p *HunyuanProvider) Name() string { return "hunyuan" }
 
+// Complete calls ChatCompletions with Stream set to false.
 func (p *HunyuanProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
 	body := map[string]any{
 		"Model":    req.Model,
@@ -67,6 +69,7 @@ func (p *HunyuanProvider) Complete(ctx context.Context, req *Request) (*Response
 	}, nil
 }
 
+// Stream calls ChatCompletions with Stream set to true and reads the SSE response.
 func (p *HunyuanProvider) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
 	body := map[string]any{
 		"Model":    req.Model,
@@ -142,6 +145,7 @@ func (p *HunyuanProvider) Stream(ctx context.Context, req *Request) (<-chan *Str
 	return ch, nil
 }
 
+// Embed calls GetEmbedding.
 func (p *HunyuanProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, error) {
 	if req == nil || len(req.Input) == 0 {
 		return nil, fmt.Errorf("embed input required")
@@ -168,6 +172,7 @@ func (p *HunyuanProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedR
 	return &EmbedResponse{Embeddings: vectors, Model: req.Model}, nil
 }
 
+// GenerateImage calls TextToImage and requests a URL result.
 func (p *HunyuanProvider) GenerateImage(ctx context.Context, req *ImageRequest) (*ImageResponse, error) {
 	if req == nil || strings.TrimSpace(req.Prompt) == "" {
 		return nil, fmt.Errorf("image prompt required")
@@ -192,10 +197,12 @@ func (p *HunyuanProvider) GenerateImage(ctx context.Context, req *ImageRequest) 
 	}, nil
 }
 
+// ListModels reports that Hunyuan has no model-list action in this client.
 func (p *HunyuanProvider) ListModels(context.Context) ([]string, error) {
 	return nil, unsupportedTargeted(p.Name(), "model listing")
 }
 
+// Health reports that Hunyuan has no health endpoint.
 func (p *HunyuanProvider) Health(context.Context) error {
 	return unsupportedTargeted(p.Name(), "health checks")
 }

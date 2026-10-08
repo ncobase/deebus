@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+// Rerank calls POST /v2/rerank.
 func (p *CohereProvider) Rerank(ctx context.Context, req *RerankRequest) (*RerankResponse, error) {
 	if req == nil || strings.TrimSpace(req.Query) == "" {
 		return nil, fmt.Errorf("rerank query required")

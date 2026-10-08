@@ -21,15 +21,15 @@ type BatchClient interface {
 
 // BatchItem is one request inside a batch.
 type BatchItem struct {
-	CustomID string
-	Request  *Request
+	CustomID string   // caller id echoed in results; generated when empty
+	Request  *Request // chat request; model may be "provider/model" on Client.SubmitBatch
 }
 
 // BatchRequest is a provider-neutral message batch.
 type BatchRequest struct {
-	Provider         string
-	Endpoint         string
-	CompletionWindow string
+	Provider         string // configured provider name, such as "openai" or "anthropic"
+	Endpoint         string // OpenAI batch endpoint; empty uses /v1/chat/completions
+	CompletionWindow string // OpenAI window; empty uses 24h
 	Items            []BatchItem
 }
 
@@ -38,7 +38,7 @@ type Batch struct {
 	ID        string
 	Provider  string
 	Status    OperationStatus
-	OutputRef string
+	OutputRef string // OpenAI output file id; empty for Anthropic
 	Error     string
 	Succeeded int
 	Errored   int
@@ -47,10 +47,11 @@ type Batch struct {
 // BatchResult is one completed batch item.
 type BatchResult struct {
 	CustomID string
-	Content  string
+	Content  string // assistant text when the item succeeded
 	Error    string
 }
 
+// SubmitBatch uploads JSONL to POST /v1/files and creates POST /v1/batches.
 func (p *OpenAIProvider) SubmitBatch(ctx context.Context, req *BatchRequest) (*Batch, error) {
 	lines, err := openAIBatchJSONL(req)
 	if err != nil {
@@ -79,6 +80,7 @@ func (p *OpenAIProvider) SubmitBatch(ctx context.Context, req *BatchRequest) (*B
 	return payload.asBatch(p.Name()), nil
 }
 
+// GetBatch calls GET /v1/batches/{id}.
 func (p *OpenAIProvider) GetBatch(ctx context.Context, id string) (*Batch, error) {
 	if err := validOperationID(id); err != nil {
 		return nil, err
@@ -103,6 +105,7 @@ func (p *OpenAIProvider) GetBatch(ctx context.Context, id string) (*Batch, error
 	return payload.asBatch(p.Name()), nil
 }
 
+// CancelBatch calls POST /v1/batches/{id}/cancel.
 func (p *OpenAIProvider) CancelBatch(ctx context.Context, id string) error {
 	if err := validOperationID(id); err != nil {
 		return err
@@ -110,6 +113,7 @@ func (p *OpenAIProvider) CancelBatch(ctx context.Context, id string) error {
 	return p.postJSON(ctx, "", "/v1/batches/"+id+"/cancel", map[string]any{}, nil)
 }
 
+// ReadBatch downloads the completed output file from GET /v1/files/{id}/content.
 func (p *OpenAIProvider) ReadBatch(ctx context.Context, id string) ([]BatchResult, error) {
 	batch, err := p.GetBatch(ctx, id)
 	if err != nil {

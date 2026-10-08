@@ -10,7 +10,7 @@ import (
 
 // RateLimitMiddleware implements a continuous token bucket rate limiter.
 // Tokens refill proportionally to elapsed time, not in discrete bursts.
-// If requestsPerSecond is <= 0, the middleware is a no-op.
+// If requestsPerSecond is <= 0, the middleware is a no-op. Health is not limited.
 type RateLimitMiddleware struct {
 	provider  providers.Provider
 	capacity  float64
@@ -32,6 +32,7 @@ func NewRateLimit(p providers.Provider, requestsPerSecond int) *RateLimitMiddlew
 	}
 }
 
+// Name returns the wrapped provider name.
 func (r *RateLimitMiddleware) Name() string { return r.provider.Name() }
 
 func (r *RateLimitMiddleware) Complete(ctx context.Context, req *providers.Request) (*providers.Response, error) {
@@ -55,6 +56,7 @@ func (r *RateLimitMiddleware) Embed(ctx context.Context, req *providers.EmbedReq
 	return r.provider.Embed(ctx, req)
 }
 
+// Health forwards the check and does not consume a rate-limit token.
 func (r *RateLimitMiddleware) Health(ctx context.Context) error {
 	return r.provider.Health(ctx)
 }

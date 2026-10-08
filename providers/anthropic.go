@@ -36,8 +36,10 @@ func NewAnthropic(cfg Config) *AnthropicProvider {
 	}
 }
 
+// Name returns "anthropic".
 func (p *AnthropicProvider) Name() string { return "anthropic" }
 
+// Complete calls POST /v1/messages.
 func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
 	data, err := json.Marshal(anthropicBody(req, false))
 	if err != nil {
@@ -143,6 +145,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 	}, nil
 }
 
+// Stream calls POST /v1/messages with streaming enabled.
 func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
 	data, err := json.Marshal(anthropicBody(req, true))
 	if err != nil {
@@ -353,6 +356,7 @@ func (p *AnthropicProvider) Embed(_ context.Context, _ *EmbedRequest) (*EmbedRes
 	}
 }
 
+// ListModels calls GET /v1/models.
 func (p *AnthropicProvider) ListModels(ctx context.Context) ([]string, error) {
 	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/models")
 	if err != nil {
@@ -386,6 +390,7 @@ func (p *AnthropicProvider) ListModels(ctx context.Context) ([]string, error) {
 	return normalizeModelNames(models), nil
 }
 
+// Health calls GET /v1/models.
 func (p *AnthropicProvider) Health(ctx context.Context) error {
 	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/v1/models")
 	if err != nil {

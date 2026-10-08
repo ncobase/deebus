@@ -11,6 +11,8 @@ import (
 	"strings"
 )
 
+// SubmitOperation starts a long-running task. OpenAI creates a video at POST /v1/videos.
+// qwen, zhipu, and doubao use their own official task endpoints.
 func (p *OpenAIProvider) SubmitOperation(ctx context.Context, req *OperationRequest) (*Operation, error) {
 	switch p.name {
 	case "qwen", "qwen-intl":
@@ -24,6 +26,7 @@ func (p *OpenAIProvider) SubmitOperation(ctx context.Context, req *OperationRequ
 	}
 }
 
+// GetOperation retrieves a task created by SubmitOperation.
 func (p *OpenAIProvider) GetOperation(ctx context.Context, id string) (*Operation, error) {
 	switch p.name {
 	case "qwen", "qwen-intl":
@@ -37,10 +40,12 @@ func (p *OpenAIProvider) GetOperation(ctx context.Context, id string) (*Operatio
 	}
 }
 
+// CancelOperation reports that these providers have no official cancel method.
 func (p *OpenAIProvider) CancelOperation(context.Context, string) error {
 	return unsupportedTargeted(p.Name(), "operation cancel")
 }
 
+// ReadOperation downloads a finished result, up to 64 MiB.
 func (p *OpenAIProvider) ReadOperation(ctx context.Context, id string) (*OperationAsset, error) {
 	op, err := p.GetOperation(ctx, id)
 	if err != nil {

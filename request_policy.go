@@ -179,6 +179,7 @@ type RequestDefaults struct {
 	Store *bool `yaml:"store"`
 }
 
+// Enabled reports whether any default is configured.
 func (d RequestDefaults) Enabled() bool {
 	return d.Store != nil
 }

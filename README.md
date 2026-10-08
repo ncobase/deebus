@@ -727,7 +727,7 @@ batch, err = client.GetBatch(ctx, "openai", batch.ID)
 results, err := client.ReadBatch(ctx, "openai", batch.ID)
 ```
 
-OpenAI batches use `/v1/files` plus `/v1/batches`. Anthropic batches use `/v1/messages/batches` and can be cancelled.
+OpenAI batches use `/v1/files` plus `/v1/batches`. Anthropic batches use `/v1/messages/batches` and can be cancelled. See `examples/09-batch`.
 
 ## Model Catalog
 

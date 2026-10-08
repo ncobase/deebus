@@ -34,14 +34,14 @@ type Reranker interface {
 
 // ImageRequest is a provider-neutral image generation request.
 type ImageRequest struct {
-	Model          string
+	Model          string // provider model, or "provider/model" on Client.GenerateImage
 	Prompt         string
-	N              int
-	Size           string
-	Quality        string
-	Style          string
+	N              int    // image count; providers that accept one image ignore values above 1
+	Size           string // pixels such as 1024x1024, or a provider aspect token
+	Quality        string // provider quality token
+	Style          string // provider style token
 	ResponseFormat string // "b64_json" or "url" when the provider supports it
-	UserID         string
+	UserID         string // end-user id when the provider accepts one
 }
 
 // Image is one generated image.
@@ -69,17 +69,18 @@ type ImageInput struct {
 }
 
 // ImageEditRequest edits one or more source images.
+// OpenAI accepts bytes, URLs, and file IDs. Gemini requires image bytes.
 type ImageEditRequest struct {
 	Model          string
 	Prompt         string
 	Images         []ImageInput
-	Mask           *ImageInput
+	Mask           *ImageInput // optional edit mask
 	N              int
 	Size           string
 	Quality        string
-	Background     string
-	OutputFormat   string
-	ResponseFormat string
+	Background     string // OpenAI background token
+	OutputFormat   string // png, jpeg, or webp when supported
+	ResponseFormat string // "b64_json" or "url" when supported
 	UserID         string
 }
 
@@ -93,15 +94,16 @@ type SpeechTurn struct {
 }
 
 // SpeechRequest is a provider-neutral text-to-speech request.
+// OpenAI defaults to voice alloy and mp3. Gemini defaults to voice Kore and wav.
 type SpeechRequest struct {
 	Model        string
-	Input        string
-	Voice        string
-	Format       string // mp3, wav, opus, aac, flac, pcm, mulaw, alaw
-	Speed        float64
-	Instructions string
-	Language     string
-	Speakers     []SpeechTurn
+	Input        string       // spoken text; unused when Speakers is set
+	Voice        string       // provider voice name
+	Format       string       // mp3, wav, opus, aac, flac, pcm, mulaw, or alaw
+	Speed        float64      // OpenAI speed; 0 uses the provider default
+	Instructions string       // OpenAI style instructions, or Gemini single-speaker style
+	Language     string       // BCP-47 language hint where the provider accepts one
+	Speakers     []SpeechTurn // Gemini multi-speaker turns
 }
 
 // SpeechResponse contains synthesized audio bytes.
@@ -115,11 +117,11 @@ type SpeechResponse struct {
 // TranscribeRequest is a provider-neutral speech-to-text request.
 type TranscribeRequest struct {
 	Model     string
-	Data      []byte
-	FileName  string
-	MediaType string
-	Language  string
-	Prompt    string
+	Data      []byte // audio bytes
+	FileName  string // upload name; empty uses audio.mp3 for OpenAI
+	MediaType string // audio MIME type
+	Language  string // language hint
+	Prompt    string // optional transcription hint
 	Format    string // json or text
 }
 
@@ -132,10 +134,10 @@ type TranscribeResponse struct {
 
 // RerankRequest orders documents against a query.
 type RerankRequest struct {
-	Model     string
+	Model     string // Cohere rerank model
 	Query     string
 	Documents []string
-	TopN      int
+	TopN      int // 0 returns the provider default
 }
 
 // RerankResult is one ranked document.

@@ -66,6 +66,7 @@ type userAgentTransport struct {
 	base http.RoundTripper
 }
 
+// RoundTrip sets a deebus User-Agent when the request does not already have one.
 func (t userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Header.Get("User-Agent") == "" {
 		cloned := req.Clone(req.Context())

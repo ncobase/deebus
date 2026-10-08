@@ -31,28 +31,35 @@ func NewKling(cfg Config) *KlingProvider {
 	return &KlingProvider{cfg: cfg, client: newHTTPClient(cfg.Timeout)}
 }
 
+// Name returns "kling".
 func (p *KlingProvider) Name() string { return "kling" }
 
+// Complete reports that this provider has no chat API.
 func (p *KlingProvider) Complete(context.Context, *Request) (*Response, error) {
 	return nil, unsupportedCapability(p.Name(), "chat completions")
 }
 
+// Stream reports that this provider has no chat API.
 func (p *KlingProvider) Stream(context.Context, *Request) (<-chan *StreamChunk, error) {
 	return nil, unsupportedCapability(p.Name(), "chat completions")
 }
 
+// Embed reports that this provider has no embeddings API.
 func (p *KlingProvider) Embed(context.Context, *EmbedRequest) (*EmbedResponse, error) {
 	return nil, unsupportedCapability(p.Name(), "embeddings")
 }
 
+// ListModels reports that this provider has no model list.
 func (p *KlingProvider) ListModels(context.Context) ([]string, error) {
 	return nil, unsupportedTargeted(p.Name(), "model listing")
 }
 
+// Health reports that this provider has no health endpoint.
 func (p *KlingProvider) Health(context.Context) error {
 	return unsupportedTargeted(p.Name(), "health checks")
 }
 
+// SubmitOperation calls POST /v1/videos/text2video, /v1/videos/image2video, or /v1/images/generations.
 func (p *KlingProvider) SubmitOperation(ctx context.Context, req *OperationRequest) (*Operation, error) {
 	if req == nil || strings.TrimSpace(req.Prompt) == "" {
 		return nil, fmt.Errorf("operation prompt required")
@@ -97,6 +104,7 @@ func (p *KlingProvider) SubmitOperation(ctx context.Context, req *OperationReque
 	return op, nil
 }
 
+// GetOperation queries the collection encoded in id.
 func (p *KlingProvider) GetOperation(ctx context.Context, id string) (*Operation, error) {
 	collection, taskID, err := splitKlingID(id)
 	if err != nil {
@@ -111,10 +119,12 @@ func (p *KlingProvider) GetOperation(ctx context.Context, id string) (*Operation
 	return op, nil
 }
 
+// CancelOperation reports that Kling has no official cancel method.
 func (p *KlingProvider) CancelOperation(context.Context, string) error {
 	return unsupportedTargeted(p.Name(), "operation cancel")
 }
 
+// ReadOperation downloads the result URL returned by Kling.
 func (p *KlingProvider) ReadOperation(ctx context.Context, id string) (*OperationAsset, error) {
 	op, err := p.GetOperation(ctx, id)
 	if err != nil {

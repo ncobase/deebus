@@ -23,9 +23,16 @@ type Logger = internallog.Logger
 // NoopLogger silently discards all log output. Used as the default logger.
 type NoopLogger struct{}
 
+// Debug discards the message.
 func (NoopLogger) Debug(string, ...any) {}
-func (NoopLogger) Info(string, ...any)  {}
-func (NoopLogger) Warn(string, ...any)  {}
+
+// Info discards the message.
+func (NoopLogger) Info(string, ...any) {}
+
+// Warn discards the message.
+func (NoopLogger) Warn(string, ...any) {}
+
+// Error discards the message.
 func (NoopLogger) Error(string, ...any) {}
 
 // sharedLogger is a thread-safe Logger holder whose backing implementation
@@ -47,6 +54,7 @@ func (s *sharedLogger) set(l Logger) {
 	s.mu.Unlock()
 }
 
+// Debug forwards to the current logger.
 func (s *sharedLogger) Debug(msg string, fields ...any) {
 	s.mu.RLock()
 	l := s.l
@@ -54,6 +62,7 @@ func (s *sharedLogger) Debug(msg string, fields ...any) {
 	l.Debug(msg, fields...)
 }
 
+// Info forwards to the current logger.
 func (s *sharedLogger) Info(msg string, fields ...any) {
 	s.mu.RLock()
 	l := s.l
@@ -61,6 +70,7 @@ func (s *sharedLogger) Info(msg string, fields ...any) {
 	l.Info(msg, fields...)
 }
 
+// Warn forwards to the current logger.
 func (s *sharedLogger) Warn(msg string, fields ...any) {
 	s.mu.RLock()
 	l := s.l
@@ -68,6 +78,7 @@ func (s *sharedLogger) Warn(msg string, fields ...any) {
 	l.Warn(msg, fields...)
 }
 
+// Error forwards to the current logger.
 func (s *sharedLogger) Error(msg string, fields ...any) {
 	s.mu.RLock()
 	l := s.l

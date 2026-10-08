@@ -1,3 +1,5 @@
+// Package deebus is a provider-neutral client for chat, embeddings, media,
+// long-running tasks, and message batches.
 package deebus
 
 import (
@@ -67,19 +69,43 @@ type CircuitBreakerConfig struct {
 
 // ProviderConfig holds the connection parameters for one AI provider.
 type ProviderConfig struct {
-	Type               string             `yaml:"type"`
-	APIKey             string             `yaml:"apiKey"`
-	BearerToken        string             `yaml:"bearerToken"`
-	AccessKey          string             `yaml:"accessKey"`
-	Secret             string             `yaml:"secret"`
-	BaseURL            string             `yaml:"baseURL"`
-	APIMode            string             `yaml:"apiMode"`
-	Headers            map[string]string  `yaml:"headers"`
-	Organization       string             `yaml:"organization"`
-	Project            string             `yaml:"project"`
-	UserProject        string             `yaml:"userProject"`
-	APIVersion         string             `yaml:"apiVersion"`
-	Region             string             `yaml:"region"`
+	// Type selects a registered provider. See providers.Register.
+	Type string `yaml:"type"`
+
+	// APIKey is the bearer or vendor API key. Do not set it together with AccessKey.
+	APIKey string `yaml:"apiKey"`
+
+	// BearerToken overrides APIKey when a proxy expects Authorization: Bearer.
+	BearerToken string `yaml:"bearerToken"`
+
+	// AccessKey and Secret authenticate kling, hunyuan, and jimeng.
+	// The secret is used only to sign requests.
+	AccessKey string `yaml:"accessKey"`
+	Secret    string `yaml:"secret"`
+
+	// BaseURL overrides the official default. Required for Azure.
+	BaseURL string `yaml:"baseURL"`
+
+	// APIMode is chat_completions or responses for OpenAI-compatible providers.
+	APIMode string `yaml:"apiMode"`
+
+	// Headers are extra request headers. Names and values must not contain CR, LF, or NUL.
+	Headers map[string]string `yaml:"headers"`
+
+	// Organization and Project are OpenAI account scoping headers.
+	Organization string `yaml:"organization"`
+	Project      string `yaml:"project"`
+
+	// UserProject is the Gemini x-goog-user-project header.
+	UserProject string `yaml:"userProject"`
+
+	// APIVersion overrides the Azure OpenAI api-version. Empty uses 2024-10-21.
+	APIVersion string `yaml:"apiVersion"`
+
+	// Region is ap-guangzhou for hunyuan and cn-north-1 for jimeng when empty.
+	Region string `yaml:"region"`
+
+	// CredentialProvider resolves credentials per call and overrides static values.
 	CredentialProvider CredentialProvider `yaml:"-"`
 }
 

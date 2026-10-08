@@ -26,8 +26,10 @@ func NewCohere(cfg Config) *CohereProvider {
 	return &CohereProvider{cfg: cfg, client: newHTTPClient(cfg.Timeout)}
 }
 
+// Name returns "cohere".
 func (p *CohereProvider) Name() string { return "cohere" }
 
+// Complete calls the Cohere chat API.
 func (p *CohereProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
 	messages := cohereMessages(req.Messages)
 
@@ -319,6 +321,7 @@ func (p *CohereProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 	return ch, nil
 }
 
+// Embed calls the Cohere embed API.
 func (p *CohereProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, error) {
 	inputType := "search_document"
 	if req.InputType != "" {
@@ -381,6 +384,7 @@ func (p *CohereProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 	}, nil
 }
 
+// ListModels calls the Cohere models API.
 func (p *CohereProvider) ListModels(ctx context.Context) ([]string, error) {
 	creds, err := p.cfg.credentials(ctx)
 	if err != nil {
@@ -438,6 +442,7 @@ func (p *CohereProvider) ListModels(ctx context.Context) ([]string, error) {
 	return normalizeModelNames(models), nil
 }
 
+// Health checks the Cohere API.
 func (p *CohereProvider) Health(ctx context.Context) error {
 	creds, err := p.cfg.credentials(ctx)
 	if err != nil {

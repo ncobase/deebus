@@ -12,7 +12,9 @@ import (
 // RetryMiddleware retries failed requests with exponential backoff and equal
 // jitter. It only retries errors that are explicitly marked retryable
 // (e.g. 429, 5xx, network). Non-retryable errors (400, 401, 403) are returned
-// immediately. Retry-After headers on 429 responses are honoured.
+// immediately. Retry-After headers on 429 responses are honoured, capped at
+// two minutes. Health is not retried. Stream retries only the failure to open
+// the stream, not an error delivered later inside a chunk.
 type RetryMiddleware struct {
 	provider   providers.Provider
 	maxRetries int
@@ -51,6 +53,7 @@ func retryValue[T any](m *RetryMiddleware, ctx context.Context, call func() (T, 
 	return zero, lastErr
 }
 
+// Name returns the wrapped provider name.
 func (m *RetryMiddleware) Name() string { return m.provider.Name() }
 
 func (m *RetryMiddleware) Complete(ctx context.Context, req *providers.Request) (*providers.Response, error) {
@@ -73,6 +76,8 @@ func (m *RetryMiddleware) Complete(ctx context.Context, req *providers.Request) 
 	return nil, lastErr
 }
 
+// Stream retries a retryable error from opening the stream. Chunk errors are
+// returned to the caller and are not retried.
 func (m *RetryMiddleware) Stream(ctx context.Context, req *providers.Request) (<-chan *providers.StreamChunk, error) {
 	var lastErr error
 	for attempt := 0; attempt <= m.maxRetries; attempt++ {
@@ -113,6 +118,7 @@ func (m *RetryMiddleware) Embed(ctx context.Context, req *providers.EmbedRequest
 	return nil, lastErr
 }
 
+// Health forwards the check and does not retry it.
 func (m *RetryMiddleware) Health(ctx context.Context) error {
 	return m.provider.Health(ctx)
 }

@@ -1,3 +1,6 @@
+// Package middleware wraps providers with logging, retry, rate limits, and
+// circuit breakers. Each wrapper forwards optional capabilities such as media,
+// operations, and batches to the next provider.
 package middleware
 
 import (
@@ -8,7 +11,10 @@ import (
 	"github.com/ncobase/deebus/providers"
 )
 
-// LoggingMiddleware logs the start, outcome, and duration of every provider call.
+// LoggingMiddleware logs chat, streaming chat, embeddings, and Gemini cache calls.
+// It records the provider, model, duration, token totals, and errors. Prompt and
+// message text are not logged. Health, model listing, media, operations, and
+// batches are forwarded without a log line.
 type LoggingMiddleware struct {
 	provider providers.Provider
 	logger   log.Logger
@@ -19,6 +25,7 @@ func NewLogging(p providers.Provider, logger log.Logger) *LoggingMiddleware {
 	return &LoggingMiddleware{provider: p, logger: logger}
 }
 
+// Name returns the wrapped provider name.
 func (m *LoggingMiddleware) Name() string { return m.provider.Name() }
 
 func (m *LoggingMiddleware) Complete(ctx context.Context, req *providers.Request) (*providers.Response, error) {
@@ -101,6 +108,7 @@ func (m *LoggingMiddleware) Embed(ctx context.Context, req *providers.EmbedReque
 	return resp, err
 }
 
+// Health forwards the check and does not write a log line.
 func (m *LoggingMiddleware) Health(ctx context.Context) error {
 	return m.provider.Health(ctx)
 }

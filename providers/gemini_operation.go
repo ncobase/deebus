@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+// SubmitOperation starts Veo through POST /v1beta/models/{model}:predictLongRunning.
 func (p *GeminiProvider) SubmitOperation(ctx context.Context, req *OperationRequest) (*Operation, error) {
 	if req == nil || strings.TrimSpace(req.Prompt) == "" {
 		return nil, fmt.Errorf("operation prompt required")
@@ -60,6 +61,7 @@ func (p *GeminiProvider) SubmitOperation(ctx context.Context, req *OperationRequ
 	}, nil
 }
 
+// GetOperation calls GET /v1beta/{operation}.
 func (p *GeminiProvider) GetOperation(ctx context.Context, id string) (*Operation, error) {
 	if err := validOperationID(id); err != nil {
 		return nil, err
@@ -84,6 +86,7 @@ func (p *GeminiProvider) GetOperation(ctx context.Context, id string) (*Operatio
 	return payload.asOperation(p.Name(), id), nil
 }
 
+// CancelOperation calls POST /v1beta/{operation}:cancel.
 func (p *GeminiProvider) CancelOperation(ctx context.Context, id string) error {
 	if err := validOperationID(id); err != nil {
 		return err
@@ -104,6 +107,7 @@ func (p *GeminiProvider) CancelOperation(ctx context.Context, id string) error {
 	return doProviderJSONRequest(ctx, p.client, httpReq, p.Name(), nil)
 }
 
+// ReadOperation downloads the finished video when its URL is on the provider host.
 func (p *GeminiProvider) ReadOperation(ctx context.Context, id string) (*OperationAsset, error) {
 	op, err := p.GetOperation(ctx, id)
 	if err != nil {

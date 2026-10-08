@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+// SynthesizeSpeech calls generateContent with AUDIO output. Voice defaults to Kore and format to wav.
 func (p *GeminiProvider) SynthesizeSpeech(ctx context.Context, req *SpeechRequest) (*SpeechResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("speech request required")
@@ -62,6 +63,7 @@ func (p *GeminiProvider) SynthesizeSpeech(ctx context.Context, req *SpeechReques
 	return &SpeechResponse{Audio: audio, MediaType: mediaType, Model: req.Model, Provider: p.Name()}, nil
 }
 
+// Transcribe sends audio inline to generateContent and returns the text parts.
 func (p *GeminiProvider) Transcribe(ctx context.Context, req *TranscribeRequest) (*TranscribeResponse, error) {
 	if req == nil || len(req.Data) == 0 {
 		return nil, fmt.Errorf("audio data required")

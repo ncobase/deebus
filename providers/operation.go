@@ -10,7 +10,9 @@ import (
 type OperationKind string
 
 const (
+	// OperationImage is an asynchronous image task, such as DashScope Wan or Jimeng.
 	OperationImage OperationKind = "image"
+	// OperationVideo is an asynchronous video task.
 	OperationVideo OperationKind = "video"
 )
 
@@ -18,11 +20,11 @@ const (
 type OperationStatus string
 
 const (
-	OperationQueued    OperationStatus = "queued"
-	OperationRunning   OperationStatus = "running"
-	OperationSucceeded OperationStatus = "succeeded"
-	OperationFailed    OperationStatus = "failed"
-	OperationCancelled OperationStatus = "cancelled"
+	OperationQueued    OperationStatus = "queued"    // accepted, not started
+	OperationRunning   OperationStatus = "running"   // provider is working
+	OperationSucceeded OperationStatus = "succeeded" // result is available
+	OperationFailed    OperationStatus = "failed"    // provider reported failure
+	OperationCancelled OperationStatus = "cancelled" // provider reported cancellation
 )
 
 // OperationClient submits and inspects provider long-running tasks.
@@ -36,28 +38,32 @@ type OperationClient interface {
 }
 
 // OperationRequest is a provider-neutral long-running generation request.
+// Model is "provider/model" on Client.Submit, or the vendor model on a direct provider call.
+// For Jimeng video, Model is the official req_key.
 type OperationRequest struct {
 	Model           string
 	Kind            OperationKind
 	Prompt          string
-	NegativePrompt  string
-	Size            string
-	AspectRatio     string
-	Resolution      string
-	DurationSeconds int
-	N               int
-	Image           *ImageInput
+	NegativePrompt  string      // DashScope video
+	Size            string      // pixels, or DashScope width*height after normalization
+	AspectRatio     string      // provider ratio such as 16:9
+	Resolution      string      // provider resolution token such as 720P
+	DurationSeconds int         // video length in seconds
+	N               int         // image count where the provider accepts it
+	Image           *ImageInput // reference image; URL or bytes according to the provider
 }
 
 // Operation is one provider task.
+// ID is the value passed back to GetOperation. Kling IDs are "text2video/{task}",
+// "image2video/{task}", or "images/{task}". Jimeng IDs are "{req_key}/{task}".
 type Operation struct {
 	ID       string
 	Provider string
 	Model    string
 	Kind     OperationKind
 	Status   OperationStatus
-	Progress int
-	Error    string
+	Progress int    // 0 when the provider does not report progress
+	Error    string // provider message when Status is failed
 	Result   *OperationResult
 }
 
@@ -70,12 +76,14 @@ type OperationResult struct {
 }
 
 // MediaAsset is a downloadable video or audio result.
+// URL may be a temporary provider or CDN address. ReadOperation attaches
+// credentials only when URL is on the provider host.
 type MediaAsset struct {
 	URL       string
 	MediaType string
 }
 
-// OperationAsset is the bytes of a finished media result.
+// OperationAsset is the bytes of a finished media result, capped at 64 MiB.
 type OperationAsset struct {
 	Data      []byte
 	MediaType string

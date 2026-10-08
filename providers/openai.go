@@ -97,6 +97,7 @@ func openAIChatBody(req *Request) (map[string]any, error) {
 	return body, nil
 }
 
+// Name returns the provider name, such as openai, qwen, or doubao.
 func (p *OpenAIProvider) Name() string {
 	if p.name == "" {
 		return "openai"
@@ -104,6 +105,7 @@ func (p *OpenAIProvider) Name() string {
 	return p.name
 }
 
+// Complete calls chat completions, or the Responses API when APIMode is responses.
 func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
 	if normalizeAPIMode(p.cfg.APIMode) == "responses" {
 		return p.completeResponses(ctx, req)
@@ -244,6 +246,7 @@ func (p *OpenAIProvider) completeFromSSE(ctx context.Context, req *Request, body
 	}, nil
 }
 
+// Stream calls the streaming chat or Responses API.
 func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *StreamChunk, error) {
 	if normalizeAPIMode(p.cfg.APIMode) == "responses" {
 		return p.streamResponses(ctx, req)
@@ -524,6 +527,7 @@ func (p *OpenAIProvider) parseSSEStream(ctx context.Context, r io.Reader) <-chan
 	return ch
 }
 
+// Embed calls POST /v1/embeddings.
 func (p *OpenAIProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, error) {
 	body := map[string]any{
 		"model": req.Model,
@@ -605,6 +609,7 @@ func normalizeOpenAICacheRetention(retention string) (string, error) {
 	}
 }
 
+// ListModels calls GET /v1/models.
 func (p *OpenAIProvider) ListModels(ctx context.Context) ([]string, error) {
 	endpoint, err := p.openAIEndpoint("", "/v1/models")
 	if err != nil {
@@ -638,6 +643,7 @@ func (p *OpenAIProvider) ListModels(ctx context.Context) ([]string, error) {
 	return normalizeModelNames(models), nil
 }
 
+// Health calls GET /v1/models.
 func (p *OpenAIProvider) Health(ctx context.Context) error {
 	endpoint, err := p.openAIEndpoint("", "/v1/models")
 	if err != nil {

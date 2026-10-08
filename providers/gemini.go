@@ -26,8 +26,10 @@ func NewGemini(cfg Config) *GeminiProvider {
 	return &GeminiProvider{cfg: cfg, client: newHTTPClient(cfg.Timeout)}
 }
 
+// Name returns "gemini".
 func (p *GeminiProvider) Name() string { return "gemini" }
 
+// Complete calls generateContent.
 func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
 	system, msgs := ExtractSystemMessage(req.Messages)
 
@@ -428,6 +430,7 @@ func (p *GeminiProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 	}, nil
 }
 
+// ListModels calls GET /v1beta/models.
 func (p *GeminiProvider) ListModels(ctx context.Context) ([]string, error) {
 	creds, err := p.cfg.credentials(ctx)
 	if err != nil {
@@ -486,6 +489,7 @@ func (p *GeminiProvider) ListModels(ctx context.Context) ([]string, error) {
 	return normalizeModelNames(models), nil
 }
 
+// Health calls GET /v1beta/models.
 func (p *GeminiProvider) Health(ctx context.Context) error {
 	creds, err := p.cfg.credentials(ctx)
 	if err != nil {

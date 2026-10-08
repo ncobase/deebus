@@ -1,3 +1,5 @@
+// Package providers implements official provider wire protocols and the
+// neutral request types used by deebus.
 package providers
 
 import (
@@ -29,20 +31,34 @@ type Provider interface {
 }
 
 // Config is the low-level configuration passed to each provider constructor.
+// Config is the connection passed to a provider constructor.
 type Config struct {
-	APIKey             string
-	BearerToken        string
-	AccessKey          string
-	Secret             string
-	BaseURL            string
-	APIMode            string
-	Timeout            time.Duration
-	Headers            map[string]string
-	Organization       string
-	Project            string
-	UserProject        string
-	APIVersion         string
-	Region             string
+	// APIKey is the bearer or vendor API key. Do not set it together with AccessKey.
+	APIKey string
+	// BearerToken overrides APIKey when a proxy expects Authorization: Bearer.
+	BearerToken string
+	// AccessKey and Secret authenticate kling, hunyuan, and jimeng.
+	AccessKey string
+	// Secret signs requests and is not sent as a header.
+	Secret string
+	// BaseURL overrides the official default. Required for Azure.
+	BaseURL string
+	// APIMode is chat_completions or responses for OpenAI-compatible providers.
+	APIMode string
+	// Timeout is the HTTP client timeout. Zero uses the provider default.
+	Timeout time.Duration
+	// Headers are extra request headers.
+	Headers map[string]string
+	// Organization and Project are OpenAI account scoping headers.
+	Organization string
+	Project      string
+	// UserProject is the Gemini x-goog-user-project header.
+	UserProject string
+	// APIVersion overrides the Azure OpenAI api-version.
+	APIVersion string
+	// Region is ap-guangzhou for hunyuan and cn-north-1 for jimeng when empty.
+	Region string
+	// CredentialProvider resolves credentials per call.
 	CredentialProvider CredentialProvider
 }
 
@@ -226,26 +242,26 @@ type ToolCall struct {
 
 // Request is the unified completion/streaming request.
 type Request struct {
-	Messages  []Message
-	Model     string
-	MaxTokens int
+	Messages  []Message // conversation turns
+	Model     string    // provider model name
+	MaxTokens int       // legacy output limit; used when MaxOutputTokens is zero
 	// MaxOutputTokens is the preferred field for modern APIs. MaxTokens remains
 	// for backward compatibility and is used when MaxOutputTokens is zero.
 	MaxOutputTokens int
-	Temperature     float64
-	TopP            float64
-	Stop            []string
-	Seed            *int
-	Stream          bool
+	Temperature     float64  // sampling temperature; 0 leaves the provider default
+	TopP            float64  // nucleus sampling; 0 leaves the provider default
+	Stop            []string // stop sequences
+	Seed            *int     // deterministic seed where the provider accepts one
+	Stream          bool     // ask for a streaming response when the call uses Stream
 	Tools           []Tool
-	ToolChoice      string         // "auto", "none", "required", or specific function name
-	Options         map[string]any // provider-specific extras (e.g. Ollama parameters)
+	ToolChoice      string         // "auto", "none", "required", or a function name
+	Options         map[string]any // provider-specific extras merged into the official body
 	Metadata        map[string]string
-	Store           *bool
+	Store           *bool // OpenAI store flag when non-nil
 
 	ResponseFormat    *ResponseFormat
 	Reasoning         *ReasoningConfig
-	ParallelToolCalls *bool
+	ParallelToolCalls *bool // OpenAI parallel tool calls when non-nil
 
 	// Cache enables provider-native request-time caching controls such as
 	// Anthropic top-level cache_control, OpenAI prompt cache hints, and
@@ -260,14 +276,14 @@ type Request struct {
 
 // Response is the unified non-streaming response.
 type Response struct {
-	Content         string
-	Reasoning       string
+	Content         string // assistant text
+	Reasoning       string // provider-visible reasoning summary, when returned
 	Model           string
 	Provider        string
-	InputTokens     int // total input tokens (including cache-read and cache-write tokens)
-	OutputTokens    int // total output tokens (including reasoning/thinking tokens)
+	InputTokens     int // total input tokens, including cache-read and cache-write tokens
+	OutputTokens    int // total output tokens, including reasoning tokens
 	TokensUsed      int // InputTokens + OutputTokens
-	ReasoningTokens int // subset of OutputTokens used for internal reasoning (OpenAI o-series: reasoning_tokens; Gemini thinking: thoughtsTokenCount)
+	ReasoningTokens int // subset of OutputTokens used for reasoning
 	FinishReason    string
 	ToolCalls       []ToolCall
 	CacheUsage      CacheUsage // non-zero when the provider reports cache activity

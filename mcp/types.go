@@ -46,6 +46,7 @@ type rpcError struct {
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
+// Error returns the JSON-RPC error code and message.
 func (e *rpcError) Error() string {
 	return fmt.Sprintf("mcp: rpc error %d: %s", e.Code, e.Message)
 }

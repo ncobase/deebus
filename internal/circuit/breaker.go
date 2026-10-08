@@ -19,6 +19,7 @@ const (
 	StateHalfOpen              // Trial period; limited requests allowed.
 )
 
+// String returns closed, open, or half-open.
 func (s State) String() string {
 	switch s {
 	case StateClosed:

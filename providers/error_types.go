@@ -40,6 +40,7 @@ type ProviderError struct {
 	Err error
 }
 
+// Error returns the provider, error type, and message.
 func (e *ProviderError) Error() string {
 	if e.Provider != "" {
 		return fmt.Sprintf("[%s/%s] %s", e.Provider, e.Type, e.Message)
@@ -47,6 +48,7 @@ func (e *ProviderError) Error() string {
 	return fmt.Sprintf("[%s] %s", e.Type, e.Message)
 }
 
+// Unwrap returns the underlying error, if any.
 func (e *ProviderError) Unwrap() error { return e.Err }
 
 // IsRetryable reports whether err is a retryable ProviderError.

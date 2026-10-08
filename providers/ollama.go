@@ -25,6 +25,7 @@ func NewOllama(cfg Config) *OllamaProvider {
 	return &OllamaProvider{cfg: cfg, client: newHTTPClient(cfg.Timeout)}
 }
 
+// Name returns "ollama".
 func (p *OllamaProvider) Name() string { return "ollama" }
 
 // convertToOllamaFormat converts messages to Ollama's /api/chat format.
@@ -61,6 +62,7 @@ func convertToOllamaFormat(messages []Message) []map[string]any {
 	return out
 }
 
+// Complete calls POST /api/chat.
 func (p *OllamaProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
 	body := map[string]any{
 		"model":    req.Model,
@@ -319,6 +321,7 @@ func (p *OllamaProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 	return ch, nil
 }
 
+// Embed calls the Ollama embeddings API.
 func (p *OllamaProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, error) {
 	body := map[string]any{
 		"model": req.Model,
@@ -370,6 +373,7 @@ func (p *OllamaProvider) Embed(ctx context.Context, req *EmbedRequest) (*EmbedRe
 	}, nil
 }
 
+// ListModels calls GET /api/tags.
 func (p *OllamaProvider) ListModels(ctx context.Context) ([]string, error) {
 	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/api/tags")
 	if err != nil {
@@ -408,6 +412,7 @@ func (p *OllamaProvider) ListModels(ctx context.Context) ([]string, error) {
 	return normalizeModelNames(models), nil
 }
 
+// Health checks the Ollama server.
 func (p *OllamaProvider) Health(ctx context.Context) error {
 	endpoint, err := buildProviderEndpoint(p.cfg.BaseURL, "/api/tags")
 	if err != nil {
