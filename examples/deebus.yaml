@@ -15,6 +15,27 @@ providers:
     apiKey: ${GEMINI_API_KEY}
     baseURL: https://generativelanguage.googleapis.com
 
+  # qwen:
+  #   type: qwen
+  #   apiKey: ${DASHSCOPE_API_KEY}
+  # doubao:
+  #   type: doubao
+  #   apiKey: ${ARK_API_KEY}
+  # hunyuan:
+  #   type: hunyuan
+  #   accessKey: ${TENCENT_SECRET_ID}
+  #   secret: ${TENCENT_SECRET_KEY}
+  #   region: ap-guangzhou
+  # kling:
+  #   type: kling
+  #   accessKey: ${KLING_ACCESS_KEY}
+  #   secret: ${KLING_SECRET_KEY}
+  # jimeng:
+  #   type: jimeng
+  #   accessKey: ${VOLC_ACCESS_KEY}
+  #   secret: ${VOLC_SECRET_KEY}
+  #   region: cn-north-1
+
 primary: anthropic/claude-opus-4-6
 
 fallbacks:

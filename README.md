@@ -121,9 +121,12 @@ func main() {
 
 | Field          | Type   | Required | Description                                                                                    |
 | -------------- | ------ | -------- | ---------------------------------------------------------------------------------------------- |
-| `type`         | string | Yes      | Built-in: `openai`, `azure`, `anthropic`, `gemini`, `ollama`, `cohere`, `groq`, `deepseek`, `mistral`, `xai`, `together`, `openrouter`, `fireworks`, `perplexity`, `qwen`, `qwen-intl`. Add more with `RegisterProvider`. |
-| `apiKey`       | string | Yes\*    | API key. Optional when `bearerToken`, `headers`, or `CredentialProvider` supplies credentials. |
+| `type`         | string | Yes      | Built-in: `openai`, `azure`, `anthropic`, `gemini`, `ollama`, `cohere`, `groq`, `deepseek`, `mistral`, `xai`, `together`, `openrouter`, `fireworks`, `perplexity`, `qwen`, `qwen-intl`, `zhipu`, `kling`, `doubao`, `hunyuan`, `jimeng`. Add more with `RegisterProvider`. |
+| `apiKey`       | string | One credential style | API key for providers that use a key or bearer token. |
 | `bearerToken`  | string | -        | Static bearer token for OAuth-style or proxy auth                                              |
+| `accessKey`    | string | With `secret` | Access key for providers that sign requests. Do not combine with `apiKey`. Used by `kling`, `hunyuan`, and `jimeng`. |
+| `secret`       | string | With `accessKey` | Signing secret. It is not sent as a header. `kling` makes an HS256 JWT. `hunyuan` uses TC3-HMAC-SHA256. `jimeng` uses Volcengine HMAC-SHA256. |
+| `region`       | string | -        | `hunyuan` defaults to `ap-guangzhou`. `jimeng` defaults to `cn-north-1`. |
 | `baseURL`      | string | Required only for Azure | Overrides the official endpoint. `https://` anywhere, or `http://` only for `localhost`, `127.0.0.1`, `::1`, and `0.0.0.0`. |
 | `apiMode`      | string | -        | OpenAI-compatible providers and Azure: `chat_completions` (default) or `responses`              |
 | `apiVersion`   | string | -        | Azure OpenAI API version. Default `2024-10-21`                                                 |
@@ -673,6 +676,58 @@ count, err := client.CountTokens(ctx, &deebus.Request{
 - OpenAI-compatible providers, including Qwen, have no counting endpoint and are skipped
 
 The count is not added to generation token totals.
+
+## Long-Running Operations
+
+Image and speech calls that return in one HTTP response stay synchronous.
+Video generation, DashScope Wan image synthesis, and Zhipu CogVideo are
+official asynchronous tasks. Submit the task, store the ID, and poll it.
+deebus does not queue or persist the job.
+
+```go
+op, err := client.Submit(ctx, &deebus.OperationRequest{
+    Model: "qwen/wan2.6-t2v",
+    Kind:  deebus.OperationVideo,
+    Prompt: "a boat crossing a lake",
+    DurationSeconds: 5,
+    AspectRatio: "16:9",
+})
+
+op, err = client.GetOperation(ctx, op.Provider, op.ID)
+if op.Status == deebus.OperationSucceeded {
+    asset, err := client.ReadOperation(ctx, op.Provider, op.ID)
+    _ = asset
+}
+```
+
+| Provider | Official task | Cancel |
+| --- | --- | --- |
+| `gemini` | Veo `predictLongRunning`, then `GET /v1beta/{operation}` | `POST {operation}:cancel` |
+| `openai` | `POST /v1/videos` with `model`, `prompt`, `size`, and `seconds`. A reference image is uploaded as the official `input_reference` file. | No official cancel. `DELETE` removes a stored video and is not used. |
+| `qwen`, `qwen-intl` | DashScope `X-DashScope-Async: enable` for Wan image and video. China uses `dashscope.aliyuncs.com`; international uses `dashscope-intl.aliyuncs.com`. | No official cancel. |
+| `zhipu` | `POST /videos/generations`, then `GET /async-result/{id}` | No official cancel. |
+| `kling` | `POST /v1/videos/text2video`, `image2video`, or `/v1/images/generations`. Auth is `Authorization: Bearer` with an HS256 JWT. | No official cancel. |
+| `doubao` | Ark `POST /api/v3/contents/generations/tasks` for video. Chat, embeddings, and images use the Ark OpenAI-compatible routes with an API key. | Official status includes `cancelled`. |
+| `hunyuan` | Tencent Cloud `ChatCompletions`, `GetEmbedding`, and `TextToImage` on `hunyuan.tencentcloudapi.com`, signed with TC3. | Not a long-running task. |
+| `jimeng` | Volcengine visual `CVSync2AsyncSubmitTask` and `CVSync2AsyncGetResult` on `visual.volcengineapi.com`. Image defaults to req_key `jimeng_t2i_v40`. Video uses the model value as the official req_key. | No official cancel. |
+
+`qwen` chat still uses DashScope compatible mode. Task calls use the native `/api/v1` routes on the same host. Image sizes use DashScope's `width*height` form. Doubao Ark uses an API key. Hunyuan uses `accessKey` as SecretId and `secret` as SecretKey, and streams `ChatCompletions` as server-sent events. 即梦 uses the Volcengine visual OpenAPI with `accessKey` and `secret`. It is not the Ark API used by `doubao`.
+
+Message batches are separate from media tasks:
+
+```go
+batch, err := client.SubmitBatch(ctx, &deebus.BatchRequest{
+    Provider: "openai",
+    Items: []deebus.BatchItem{{
+        CustomID: "a",
+        Request:  &deebus.Request{Model: "gpt-4o", Messages: []deebus.Message{deebus.TextMessage("user", "hi")}},
+    }},
+})
+batch, err = client.GetBatch(ctx, "openai", batch.ID)
+results, err := client.ReadBatch(ctx, "openai", batch.ID)
+```
+
+OpenAI batches use `/v1/files` plus `/v1/batches`. Anthropic batches use `/v1/messages/batches` and can be cancelled.
 
 ## Model Catalog
 

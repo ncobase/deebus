@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CountTokens` for Anthropic `/v1/messages/count_tokens`, Gemini `countTokens`, and Cohere `/v1/tokenize`. Providers without an official counting endpoint are skipped.
 - Embedding calls update `Client.Stats`, and `RequestLimits.MaxTextBytes` also applies to embedding inputs.
 - Concurrent `Client.Health`.
+- `Submit`, `GetOperation`, `CancelOperation`, and `ReadOperation` for official long-running media tasks: Gemini Veo, OpenAI Videos, DashScope Wan image and video, Zhipu CogVideo, and Kling image and video tasks. The caller stores the task ID and polls. OpenAI, DashScope, Zhipu, and Kling have no official cancel method.
+- Provider credentials are either an API key or an access key plus secret. `kling` signs its official HS256 JWT. `hunyuan` signs Tencent Cloud TC3-HMAC-SHA256. The secret is not sent.
+- `doubao` uses the Ark API key for chat, embeddings, images, and asynchronous video tasks at `/contents/generations/tasks`.
+- `hunyuan` calls official `ChatCompletions`, including SSE streaming, `GetEmbedding`, and `TextToImage`.
+- OpenAI message batches upload JSONL to `/v1/files` and create `/v1/batches`. Anthropic message batches use `/v1/messages/batches`. Kling reuses a JWT until shortly before it expires. OpenAI video reference images are uploaded as the official `input_reference` file.
+- `jimeng` calls the Volcengine visual API on `visual.volcengineapi.com` with HMAC-SHA256. Image and video tasks use `CVSync2AsyncSubmitTask` and `CVSync2AsyncGetResult`. The default image req_key is `jimeng_t2i_v40`.
 
 ### Changed
 

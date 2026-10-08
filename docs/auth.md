@@ -2,9 +2,10 @@
 
 ## Scope
 
-The library supports static API keys, static bearer tokens, extra headers, and
-runtime credential injection. It does not implement provider-specific OAuth
-browser flows or token exchange endpoints.
+The library supports static API keys, static bearer tokens, extra headers,
+runtime credential injection, and provider-specific access-key signatures.
+It does not implement provider-specific OAuth browser flows or token exchange
+endpoints.
 
 This keeps the core package dependency-light while still allowing callers to
 inject short-lived access tokens, OAuth bearer tokens, or proxy credentials.
@@ -53,6 +54,16 @@ Official docs:
 - <https://ai.google.dev/gemini-api/docs/api-key>
 - <https://ai.google.dev/gemini-api/docs/oauth>
 
+### Access key and secret
+
+Use `accessKey` and `secret` together, and do not also set `apiKey`.
+
+- `kling` signs an HS256 JWT. The request sends `Authorization: Bearer`.
+- `hunyuan` signs Tencent Cloud TC3-HMAC-SHA256. `accessKey` is SecretId and `secret` is SecretKey. `region` defaults to `ap-guangzhou`.
+- `jimeng` signs Volcengine HMAC-SHA256 for `visual.volcengineapi.com`. `region` defaults to `cn-north-1` and the service is `cv`.
+
+`doubao` stays on an Ark API key. Other provider types reject an access key.
+
 ## Runtime Credentials
 
 Use `CredentialProvider` when credentials must be resolved per request:
@@ -66,6 +77,8 @@ The provider returns a `Credentials` value:
 
 - `APIKey`
 - `BearerToken`
+- `AccessKey`
+- `Secret`
 - `Headers`
 - `Organization`
 - `Project`

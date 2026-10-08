@@ -75,7 +75,10 @@ request or across fallback providers. `Client.Embed` applies
 use the same fallback chain. Text limits apply to prompts, speech input, and
 rerank documents. `MaxMediaBytes` applies to transcription audio and image edits. `CountTokens`
 uses the same request limits and only calls a provider's official counting
-endpoint.
+endpoint. `Submit`, `GetOperation`, and `ReadOperation` adapt official
+long-running media tasks, including Jimeng on the Volcengine visual API.
+`SubmitBatch` adapts OpenAI and Anthropic message batches. The application
+stores the task ID and chooses when to poll.
 
 ## Reports
 
