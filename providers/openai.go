@@ -408,7 +408,7 @@ func (p *OpenAIProvider) parseSSEStream(ctx context.Context, r io.Reader) <-chan
 
 			if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 				select {
-				case ch <- &StreamChunk{Error: fmt.Errorf("parse chunk: %w", err)}:
+				case ch <- &StreamChunk{Error: fmt.Errorf("parse chunk: %w", err), Done: true}:
 				case <-ctx.Done():
 				}
 				return
@@ -518,7 +518,7 @@ func (p *OpenAIProvider) parseSSEStream(ctx context.Context, r io.Reader) <-chan
 
 		if err := scanner.Err(); err != nil {
 			select {
-			case ch <- &StreamChunk{Error: fmt.Errorf("stream read: %w", err)}:
+			case ch <- &StreamChunk{Error: fmt.Errorf("stream read: %w", err), Done: true}:
 			case <-ctx.Done():
 			}
 		}
@@ -991,7 +991,7 @@ func (p *OpenAIProvider) parseResponsesSSE(ctx context.Context, r io.Reader) <-c
 			}
 			if err := json.Unmarshal([]byte(payload), &event); err != nil {
 				select {
-				case ch <- &StreamChunk{Error: fmt.Errorf("parse chunk: %w", err)}:
+				case ch <- &StreamChunk{Error: fmt.Errorf("parse chunk: %w", err), Done: true}:
 				case <-ctx.Done():
 				}
 				return
@@ -1053,7 +1053,7 @@ func (p *OpenAIProvider) parseResponsesSSE(ctx context.Context, r io.Reader) <-c
 		}
 		if err := scanner.Err(); err != nil {
 			select {
-			case ch <- &StreamChunk{Error: fmt.Errorf("stream read: %w", err)}:
+			case ch <- &StreamChunk{Error: fmt.Errorf("stream read: %w", err), Done: true}:
 			case <-ctx.Done():
 			}
 		}

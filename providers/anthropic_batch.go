@@ -170,6 +170,12 @@ func parseAnthropicBatchResults(raw []byte) ([]BatchResult, error) {
 		if row.Result.Error != nil {
 			item.Error = row.Result.Error.Message
 		}
+		switch row.Result.Type {
+		case "errored", "canceled", "expired":
+			if item.Error == "" {
+				item.Error = row.Result.Type
+			}
+		}
 		for _, block := range row.Result.Message.Content {
 			item.Content += block.Text
 		}

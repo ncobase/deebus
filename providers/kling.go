@@ -241,9 +241,10 @@ type klingEnvelope struct {
 }
 
 type klingData struct {
-	TaskID     string `json:"task_id"`
-	TaskStatus string `json:"task_status"`
-	TaskResult struct {
+	TaskID        string `json:"task_id"`
+	TaskStatus    string `json:"task_status"`
+	TaskStatusMsg string `json:"task_status_msg"`
+	TaskResult    struct {
 		Videos []struct {
 			URL string `json:"url"`
 		} `json:"videos"`
@@ -257,6 +258,7 @@ func (e klingEnvelope) asOperation() *Operation {
 	op := &Operation{
 		Provider: "kling",
 		Status:   mapKlingStatus(e.Data.TaskStatus),
+		Error:    e.Data.TaskStatusMsg,
 	}
 	var videos []MediaAsset
 	for _, video := range e.Data.TaskResult.Videos {

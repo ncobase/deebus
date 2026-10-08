@@ -42,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Gemini API keys placed in query strings are URL-encoded, and network errors no longer echo the raw key.
+- A stream read or parse failure ends the stream with `Done` set, so callers do not wait for another chunk.
+- Batch result lines keep per-item errors when the batch itself has ended. OpenAI item status codes and Anthropic `errored`, `canceled`, and `expired` results are preserved.
+- Kling `task_status_msg` is returned on the operation. DashScope, Kling, Jimeng, Doubao, OpenAI, and Anthropic task statuses stay mapped to the shared lifecycle.
 
 ## [1.8.0] - 2026-06-21
 

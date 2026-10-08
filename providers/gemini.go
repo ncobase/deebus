@@ -350,7 +350,7 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 
 		if err := scanner.Err(); err != nil {
 			select {
-			case ch <- &StreamChunk{Error: fmt.Errorf("stream read: %w", err)}:
+			case ch <- &StreamChunk{Error: fmt.Errorf("stream read: %w", err), Done: true}:
 			case <-ctx.Done():
 			}
 		}

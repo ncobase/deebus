@@ -285,7 +285,11 @@ func parseOpenAIBatchResults(raw []byte) ([]BatchResult, error) {
 				Message string `json:"message"`
 			} `json:"error"`
 			Response struct {
-				Body struct {
+				StatusCode int `json:"status_code"`
+				Body       struct {
+					Error *struct {
+						Message string `json:"message"`
+					} `json:"error"`
 					Choices []struct {
 						Message struct {
 							Content string `json:"content"`
@@ -300,6 +304,12 @@ func parseOpenAIBatchResults(raw []byte) ([]BatchResult, error) {
 		item := BatchResult{CustomID: row.CustomID}
 		if row.Error != nil {
 			item.Error = row.Error.Message
+		}
+		if row.Response.Body.Error != nil && item.Error == "" {
+			item.Error = row.Response.Body.Error.Message
+		}
+		if row.Response.StatusCode >= 400 && item.Error == "" {
+			item.Error = fmt.Sprintf("status %d", row.Response.StatusCode)
 		}
 		if len(row.Response.Body.Choices) > 0 {
 			item.Content = row.Response.Body.Choices[0].Message.Content
