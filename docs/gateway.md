@@ -5,10 +5,11 @@ designed for applications that expose one or more upstream model providers to
 users, teams, spaces, or internal products.
 
 The library still stays below the application boundary. User management,
-balances, quotas, database records, permission checks, and API-key storage
-belong in the gateway application. `deebus` provides reusable request
-preparation, cache-affinity helpers, prompt-safe observability primitives, and
-usage/cost calculations based on provider-reported tokens.
+balances, quotas, database records, permission checks, API-key storage, task
+queues, and poll schedules belong in the gateway application. `deebus` provides
+reusable request preparation, cache-affinity helpers, prompt-safe observability
+primitives, official task and batch clients, and usage/cost calculations based
+on provider-reported tokens.
 
 ## Request Policy
 

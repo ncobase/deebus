@@ -4,7 +4,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/ncobase/deebus)](https://goreportcard.com/report/github.com/ncobase/deebus)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**deebus** is a production-grade AI provider abstraction library for Go. It presents a unified interface over five large-language-model providers, wraps every call in a reliability stack (retry, circuit breaking, rate limiting, fallback), and ships an agentic loop with parallel tool execution and an MCP client for connecting to any Model Context Protocol server.
+**deebus** is a production-grade AI provider abstraction library for Go. It presents one interface over official provider APIs, wraps every call in a reliability stack (retry, circuit breaking, rate limiting, fallback), and ships an agentic loop with parallel tool execution and an MCP client.
 
 ---
 
@@ -12,23 +12,26 @@
 
 | Feature                     | Details                                                                                                                                  |
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Multi-provider**          | OpenAI, Azure OpenAI, Anthropic, Gemini, Ollama, Cohere, Qwen, plus OpenAI-compatible Groq, DeepSeek, Mistral, xAI, Together, OpenRouter, Fireworks, and Perplexity |
+| **Multi-provider**          | OpenAI, Azure OpenAI, Anthropic, Gemini, Ollama, Cohere, Qwen, Zhipu, Doubao, Kling, Hunyuan, Jimeng, plus OpenAI-compatible Groq, DeepSeek, Mistral, xAI, Together, OpenRouter, Fireworks, and Perplexity |
 | **Smart fallback**          | Primary -> fallbacks in order; HTTP 400 is never retried or fallen back                                                                  |
 | **Retry with jitter**       | Equal-jitter exponential backoff; honours `Retry-After` on 429                                                                           |
 | **Circuit breaker**         | Closed -> Open -> Half-open state machine per provider                                                                                   |
 | **Rate limiting**           | Continuous token-bucket algorithm per provider                                                                                           |
-| **Tool calling**            | Function/tool use for all five providers with streaming assembly                                                                         |
+| **Tool calling**            | Function/tool use on providers with an official tool-call API, including streaming assembly                                              |
 | **Multi-turn tool calling** | `AssistantMessage` / `ToolResultMessage` with per-provider wire format                                                                   |
 | **Agent loop**              | `RunAgent` / `RunAgentStream` with parallel tool dispatch and event hooks                                                                |
 | **MCP client**              | Connects to any MCP server via stdio or Streamable HTTP (spec 2025-11-25)                                                                |
 | **Prompt caching**          | Anthropic block/request caching, OpenAI request hints, Gemini explicit caches; `CacheUsage` in response                                  |
-| **Streaming**               | SSE / NDJSON streaming for all five providers, including tool-call assembly and reasoning deltas                              |
+| **Streaming**               | SSE / NDJSON streaming where the provider has an official stream, including tool-call assembly and reasoning deltas           |
 | **Gateway governance**      | Optional request policy, prompt-cache key injection, cache-breaker rewrites, safe snapshots, stream aggregation, and cost estimates       |
 | **Multimodal**              | Text, images (URL / base64), audio, PDF documents                                                                                        |
 | **Embeddings**              | OpenAI, Gemini, Ollama, Cohere                                                                                                           |
 | **Image generation**        | OpenAI-compatible images API and Gemini native image output                                                                              |
 | **Speech**                  | OpenAI-compatible text-to-speech and transcription                                                                                       |
 | **Rerank**                  | Cohere document reranking                                                                                                                |
+| **Token counts**            | Official counters for Anthropic, Gemini, and Cohere. Providers without a counter are skipped                                            |
+| **Long-running tasks**      | Submit, poll, and download for Veo, OpenAI video, Wan, CogVideo, Kling, Doubao video, and Jimeng                                        |
+| **Message batches**         | OpenAI `/v1/batches` and Anthropic `/v1/messages/batches`                                                                                |
 | **Structured outputs**      | JSON object / JSON Schema response formats mapped across OpenAI, Gemini, Ollama, and Cohere                                  |
 | **Structured logging**      | Pluggable `Logger` interface; defaults to no-op                                                                                          |
 | **Usage statistics**        | Per-request input/output/cache token counters; ReasoningTokens for o-series/thinking models; aggregate Stats with cache hit/write totals |
@@ -942,11 +945,13 @@ Both helpers walk the error chain, so they work correctly with wrapped errors.
 - `errors.go`: `IsRetryable`, `IsFallback`
 - `logger.go`: `Logger`, `NoopLogger`, `sharedLogger`
 - `stats.go`: atomic request and token counters
-- `providers/`: provider implementations, registry, media APIs, wire-format helpers, cache types, and auth/error handling
+- `operation.go`, `batch.go`, `count.go`, `media.go`: long-running tasks, message batches, token counts, and synchronous media
+- `providers/`: provider implementations, registry, official wire formats, signatures, and auth/error handling
 - `mcp/`: MCP client, transports, protocol types, and tool conversion
-- `middleware/`: logging, retry, rate limit, and circuit breaker layers
+- `middleware/`: logging, retry, rate limit, and circuit breaker layers. Optional capabilities are forwarded
 - `internal/`: shared circuit breaker and logger internals
-- `examples/`: completion, tools, agent, embeddings, MCP, and caching demos
+- `docs/`: authentication, caching, and gateway governance
+- `examples/`: completion, tools, agent, embeddings, MCP, caching, media, operations, and batches
 
 ---
 
