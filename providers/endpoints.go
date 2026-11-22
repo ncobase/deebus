@@ -15,6 +15,7 @@ var defaultBaseURLs = map[string]string{
 	"deepseek":   "https://api.deepseek.com",
 	"mistral":    "https://api.mistral.ai",
 	"xai":        "https://api.x.ai",
+	"grok":       "https://api.x.ai",
 	"together":   "https://api.together.xyz/v1",
 	"openrouter": "https://openrouter.ai/api/v1",
 	"fireworks":  "https://api.fireworks.ai/inference/v1",

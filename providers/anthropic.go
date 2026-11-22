@@ -74,11 +74,12 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 
 	var result struct {
 		Content []struct {
-			Type  string `json:"type"`
-			Text  string `json:"text"`
-			ID    string `json:"id"`
-			Name  string `json:"name"`
-			Input any    `json:"input"`
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			Thinking string `json:"thinking"`
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			Input    any    `json:"input"`
 		} `json:"content"`
 		Usage struct {
 			InputTokens              int `json:"input_tokens"`
@@ -106,7 +107,11 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 		case "text":
 			content = block.Text
 		case "thinking":
-			thinking += block.Text
+			if block.Thinking != "" {
+				thinking += block.Thinking
+			} else {
+				thinking += block.Text
+			}
 		case "tool_use":
 			args, _ := json.Marshal(block.Input)
 			tc := ToolCall{
@@ -130,6 +135,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 
 	return &Response{
 		Content:      content,
+		Reasoning:    thinking,
 		Model:        result.Model,
 		Provider:     p.Name(),
 		InputTokens:  totalInput,
@@ -212,6 +218,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 			Delta struct {
 				Type        string `json:"type"`
 				Text        string `json:"text"`
+				Thinking    string `json:"thinking"`
 				PartialJSON string `json:"partial_json"`
 				StopReason  string `json:"stop_reason"`
 			} `json:"delta"`
@@ -247,6 +254,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 			event.ContentBlock.Name = ""
 			event.Delta.Type = ""
 			event.Delta.Text = ""
+			event.Delta.Thinking = ""
 			event.Delta.PartialJSON = ""
 			event.Delta.StopReason = ""
 
@@ -274,9 +282,13 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 				}
 				switch event.Delta.Type {
 				case "thinking_delta":
-					if event.Delta.Text != "" {
+					thought := event.Delta.Thinking
+					if thought == "" {
+						thought = event.Delta.Text
+					}
+					if thought != "" {
 						select {
-						case ch <- &StreamChunk{Reasoning: event.Delta.Text}:
+						case ch <- &StreamChunk{Reasoning: thought}:
 						case <-ctx.Done():
 							return
 						}

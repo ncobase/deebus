@@ -42,7 +42,7 @@ func New(typeName string, cfg Config) (Provider, error) {
 // AllowsAPIMode reports whether a provider type accepts OpenAI apiMode.
 func AllowsAPIMode(typeName string) bool {
 	switch strings.ToLower(strings.TrimSpace(typeName)) {
-	case "openai", "azure", "groq", "deepseek", "mistral", "xai", "together", "openrouter", "fireworks", "perplexity", "qwen", "qwen-intl", "zhipu", "doubao":
+	case "openai", "openai-compatible", "azure", "groq", "deepseek", "mistral", "xai", "grok", "together", "openrouter", "fireworks", "perplexity", "qwen", "qwen-intl", "zhipu", "doubao":
 		return true
 	default:
 		return false
@@ -59,7 +59,7 @@ func init() {
 	Register("kling", func(cfg Config) Provider { return NewKling(cfg) })
 	Register("hunyuan", func(cfg Config) Provider { return NewHunyuan(cfg) })
 	Register("jimeng", func(cfg Config) Provider { return NewJimeng(cfg) })
-	for _, name := range []string{"groq", "deepseek", "mistral", "xai", "together", "openrouter", "fireworks", "perplexity", "qwen", "qwen-intl", "zhipu", "doubao"} {
+	for _, name := range []string{"openai-compatible", "groq", "deepseek", "mistral", "xai", "grok", "together", "openrouter", "fireworks", "perplexity", "qwen", "qwen-intl", "zhipu", "doubao"} {
 		name := name
 		Register(name, func(cfg Config) Provider { return NewOpenAICompatible(name, cfg) })
 	}
