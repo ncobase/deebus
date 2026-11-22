@@ -113,8 +113,10 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 		Candidates []struct {
 			Content struct {
 				Parts []struct {
-					Text         string `json:"text"`
-					FunctionCall *struct {
+					Text             string `json:"text"`
+					Thought          bool   `json:"thought"`
+					ThoughtSignature string `json:"thoughtSignature"`
+					FunctionCall     *struct {
 						Name string         `json:"name"`
 						Args map[string]any `json:"args"`
 					} `json:"functionCall"`
@@ -141,22 +143,32 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 
 	cand := result.Candidates[0]
 	content := ""
+	reasoning := ""
+	lastSig := ""
 	var toolCalls []ToolCall
 
 	for _, part := range cand.Content.Parts {
-		if part.Text != "" {
+		if part.ThoughtSignature != "" {
+			lastSig = part.ThoughtSignature
+		}
+		if part.Thought {
+			reasoning += part.Text
+		} else if part.Text != "" {
 			content += part.Text
 		}
 		if part.FunctionCall != nil {
 			args, _ := json.Marshal(part.FunctionCall.Args)
-			tc := ToolCall{Type: "function"}
+			tc := ToolCall{
+				Type:             "function",
+				ThoughtSignature: part.ThoughtSignature,
+			}
 			tc.Function.Name = part.FunctionCall.Name
 			tc.Function.Arguments = string(args)
 			toolCalls = append(toolCalls, tc)
 		}
 	}
 
-	if content == "" && len(toolCalls) == 0 {
+	if content == "" && reasoning == "" && len(toolCalls) == 0 {
 		return nil, fmt.Errorf("empty response from gemini")
 	}
 
@@ -166,17 +178,19 @@ func (p *GeminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 	output := result.UsageMetadata.CandidatesTokenCount + result.UsageMetadata.ThoughtsTokenCount
 
 	return &Response{
-		Content:         content,
-		Model:           req.Model,
-		Provider:        p.Name(),
-		InputTokens:     input,
-		OutputTokens:    output,
-		TokensUsed:      input + output,
-		ReasoningTokens: result.UsageMetadata.ThoughtsTokenCount,
-		FinishReason:    cand.FinishReason,
-		ToolCalls:       toolCalls,
-		CacheUsage:      CacheUsage{ReadTokens: result.UsageMetadata.CachedContentTokenCount},
-		CreatedAt:       time.Now(),
+		Content:            content,
+		Reasoning:          reasoning,
+		ReasoningSignature: lastSig,
+		Model:              req.Model,
+		Provider:           p.Name(),
+		InputTokens:        input,
+		OutputTokens:       output,
+		TokensUsed:         input + output,
+		ReasoningTokens:    result.UsageMetadata.ThoughtsTokenCount,
+		FinishReason:       cand.FinishReason,
+		ToolCalls:          toolCalls,
+		CacheUsage:         CacheUsage{ReadTokens: result.UsageMetadata.CachedContentTokenCount},
+		CreatedAt:          time.Now(),
 	}, nil
 }
 
@@ -266,6 +280,8 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 		defer resp.Body.Close()
 
 		var inputTokens, outputTokens, cacheRead, thoughts int
+		var toolCalls []ToolCall
+		var lastSig string
 
 		scanner := newStreamScanner(resp.Body)
 		for scanner.Scan() {
@@ -279,8 +295,10 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 				Candidates []struct {
 					Content struct {
 						Parts []struct {
-							Text         string `json:"text"`
-							FunctionCall *struct {
+							Text             string `json:"text"`
+							Thought          bool   `json:"thought"`
+							ThoughtSignature string `json:"thoughtSignature"`
+							FunctionCall     *struct {
 								Name string         `json:"name"`
 								Args map[string]any `json:"args"`
 							} `json:"functionCall"`
@@ -311,19 +329,31 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 			}
 
 			cand := event.Candidates[0]
-			var toolCalls []ToolCall
 
 			for _, part := range cand.Content.Parts {
-				if part.Text != "" {
+				if part.ThoughtSignature != "" {
+					lastSig = part.ThoughtSignature
+				}
+				if part.Thought && part.Text != "" {
 					select {
-					case ch <- &StreamChunk{Content: part.Text}:
+					case ch <- &StreamChunk{Reasoning: part.Text, ReasoningSignature: part.ThoughtSignature}:
+					case <-ctx.Done():
+						return
+					}
+				} else if !part.Thought && part.Text != "" {
+					select {
+					case ch <- &StreamChunk{Content: part.Text, ReasoningSignature: part.ThoughtSignature}:
 					case <-ctx.Done():
 						return
 					}
 				}
 				if part.FunctionCall != nil {
 					args, _ := json.Marshal(part.FunctionCall.Args)
-					tc := ToolCall{Type: "function"}
+					tc := ToolCall{
+						Index:            len(toolCalls),
+						Type:             "function",
+						ThoughtSignature: part.ThoughtSignature,
+					}
 					tc.Function.Name = part.FunctionCall.Name
 					tc.Function.Arguments = string(args)
 					toolCalls = append(toolCalls, tc)
@@ -333,14 +363,15 @@ func (p *GeminiProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 			if cand.FinishReason != "" {
 				select {
 				case ch <- &StreamChunk{
-					Done:            true,
-					FinishReason:    cand.FinishReason,
-					InputTokens:     inputTokens,
-					OutputTokens:    outputTokens + thoughts,
-					TokensUsed:      inputTokens + outputTokens + thoughts,
-					ReasoningTokens: thoughts,
-					ToolCalls:       toolCalls,
-					CacheUsage:      CacheUsage{ReadTokens: cacheRead},
+					Done:               true,
+					FinishReason:       cand.FinishReason,
+					InputTokens:        inputTokens,
+					OutputTokens:       outputTokens + thoughts,
+					TokensUsed:         inputTokens + outputTokens + thoughts,
+					ReasoningTokens:    thoughts,
+					ReasoningSignature: lastSig,
+					ToolCalls:          toolCalls,
+					CacheUsage:         CacheUsage{ReadTokens: cacheRead},
 				}:
 				case <-ctx.Done():
 				}

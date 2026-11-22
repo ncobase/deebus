@@ -8,9 +8,11 @@ import (
 
 // StreamResult is the accumulated result of a streaming request.
 type StreamResult struct {
-	Content   string
-	Reasoning string
-	ToolCalls []ToolCall
+	Content            string
+	Reasoning          string
+	ReasoningSignature string
+	EncryptedReasoning string
+	ToolCalls          []ToolCall
 
 	FinishReason    string
 	InputTokens     int
@@ -51,6 +53,12 @@ func (a *StreamAccumulator) Add(chunk *StreamChunk) error {
 	a.result.ChunkCount++
 	a.result.Content += chunk.Content
 	a.result.Reasoning += chunk.Reasoning
+	if chunk.ReasoningSignature != "" {
+		a.result.ReasoningSignature += chunk.ReasoningSignature
+	}
+	if chunk.EncryptedReasoning != "" {
+		a.result.EncryptedReasoning = chunk.EncryptedReasoning
+	}
 
 	if len(chunk.ToolCalls) > 0 {
 		a.result.ToolCalls = cloneToolCalls(chunk.ToolCalls)

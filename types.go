@@ -55,6 +55,7 @@ type (
 	Message         = providers.Message
 	ContentBlock    = providers.ContentBlock
 	TextContent     = providers.TextContent
+	ThinkingContent = providers.ThinkingContent
 	ImageContent    = providers.ImageContent
 	ImageSource     = providers.ImageSource
 	AudioContent    = providers.AudioContent

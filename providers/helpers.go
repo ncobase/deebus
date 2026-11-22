@@ -279,6 +279,16 @@ func ConvertToOpenAIResponsesInput(messages []Message) []map[string]any {
 			})
 
 		case "assistant":
+			var preItems []map[string]any
+			for _, block := range msg.Content {
+				if tb, ok := block.(ThinkingContent); ok && tb.Data != "" {
+					preItems = append(preItems, map[string]any{
+						"type":              "reasoning",
+						"encrypted_content": tb.Data,
+					})
+				}
+			}
+			out = append(out, preItems...)
 			if len(msg.ToolCalls) > 0 {
 				if text := ExtractText(msg.Content); text != "" {
 					out = append(out, map[string]any{
@@ -296,7 +306,10 @@ func ConvertToOpenAIResponsesInput(messages []Message) []map[string]any {
 					})
 				}
 			} else {
-				out = append(out, openAIResponsesMessage(msg))
+				respMsg := openAIResponsesMessage(msg)
+				if parts, ok := respMsg["content"].([]map[string]any); ok && len(parts) > 0 {
+					out = append(out, respMsg)
+				}
 			}
 
 		default:
@@ -416,11 +429,8 @@ func ConvertToAnthropicFormat(messages []Message) []map[string]any {
 
 		case "assistant":
 			if len(msg.ToolCalls) > 0 {
-				// Build content array: optional text block + tool_use blocks.
-				parts := []map[string]any{}
-				if text := ExtractText(msg.Content); text != "" {
-					parts = append(parts, map[string]any{"type": "text", "text": text})
-				}
+				// Build content array: thinking blocks first (Anthropic requirement), then text and tool_use.
+				parts := anthropicThinkingAndTextParts(msg.Content)
 				for _, tc := range msg.ToolCalls {
 					// input must be a JSON object, not a string.
 					var input any
@@ -446,10 +456,53 @@ func ConvertToAnthropicFormat(messages []Message) []map[string]any {
 	return out
 }
 
+func anthropicThinkingAndTextParts(content []ContentBlock) []map[string]any {
+	parts := make([]map[string]any, 0, len(content))
+	for _, block := range content {
+		if tb, ok := block.(ThinkingContent); ok {
+			parts = append(parts, serializeAnthropicThinking(tb))
+		}
+	}
+	for _, block := range content {
+		if tc, ok := block.(TextContent); ok && tc.Text != "" {
+			m := map[string]any{"type": "text", "text": tc.Text}
+			if tc.CacheControl != nil {
+				m["cache_control"] = tc.CacheControl
+			}
+			parts = append(parts, m)
+		}
+	}
+	return parts
+}
+
+func serializeAnthropicThinking(tb ThinkingContent) map[string]any {
+	if tb.Type == "redacted_thinking" && tb.Data != "" {
+		return map[string]any{
+			"type": "redacted_thinking",
+			"data": tb.Data,
+		}
+	}
+	m := map[string]any{
+		"type":     "thinking",
+		"thinking": tb.Thinking,
+	}
+	if tb.Signature != "" {
+		m["signature"] = tb.Signature
+	}
+	return m
+}
+
 // anthropicContentMessage serialises a regular message's content blocks,
 // including any cache_control markers for prompt caching.
 func anthropicContentMessage(msg Message) map[string]any {
 	parts := make([]map[string]any, 0, len(msg.Content))
+	if msg.Role == "assistant" {
+		for _, block := range msg.Content {
+			if tb, ok := block.(ThinkingContent); ok {
+				parts = append(parts, serializeAnthropicThinking(tb))
+			}
+		}
+	}
 	for _, block := range msg.Content {
 		switch b := block.(type) {
 		case TextContent:
@@ -519,22 +572,23 @@ func ConvertToGeminiFormat(messages []Message) []map[string]any {
 		case "assistant":
 			role := "model"
 			if len(msg.ToolCalls) > 0 {
-				// Build parts: optional text + functionCall parts.
-				parts := []map[string]any{}
-				if text := ExtractText(msg.Content); text != "" {
-					parts = append(parts, map[string]any{"text": text})
-				}
+				// Build parts: thinking/thoughtSignature parts, optional text, and functionCall parts.
+				parts := geminiThinkingAndTextParts(msg.Content)
 				for _, tc := range msg.ToolCalls {
 					var args any
 					if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 						args = map[string]any{}
 					}
-					parts = append(parts, map[string]any{
+					part := map[string]any{
 						"functionCall": map[string]any{
 							"name": tc.Function.Name,
 							"args": args,
 						},
-					})
+					}
+					if tc.ThoughtSignature != "" {
+						part["thoughtSignature"] = tc.ThoughtSignature
+					}
+					parts = append(parts, part)
 				}
 				out = append(out, map[string]any{"role": role, "parts": parts})
 			} else {
@@ -548,11 +602,44 @@ func ConvertToGeminiFormat(messages []Message) []map[string]any {
 	return out
 }
 
+func geminiThinkingAndTextParts(content []ContentBlock) []map[string]any {
+	parts := make([]map[string]any, 0, len(content))
+	for _, block := range content {
+		switch b := block.(type) {
+		case ThinkingContent:
+			part := map[string]any{"thought": true}
+			if b.Thinking != "" {
+				part["text"] = b.Thinking
+			}
+			if b.Signature != "" {
+				part["thoughtSignature"] = b.Signature
+			}
+			parts = append(parts, part)
+		case TextContent:
+			if b.Text != "" {
+				parts = append(parts, map[string]any{"text": b.Text})
+			}
+		}
+	}
+	return parts
+}
+
 // geminiContentMessage serialises a regular message's content blocks.
 func geminiContentMessage(msg Message, role string) map[string]any {
 	parts := make([]map[string]any, 0, len(msg.Content))
 	for _, block := range msg.Content {
 		switch b := block.(type) {
+		case ThinkingContent:
+			if role == "model" {
+				part := map[string]any{"thought": true}
+				if b.Thinking != "" {
+					part["text"] = b.Thinking
+				}
+				if b.Signature != "" {
+					part["thoughtSignature"] = b.Signature
+				}
+				parts = append(parts, part)
+			}
 		case TextContent:
 			parts = append(parts, map[string]any{"text": b.Text})
 		case ImageContent:

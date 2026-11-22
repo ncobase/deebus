@@ -111,6 +111,17 @@ type TextContent struct {
 
 func (TextContent) contentBlock() {}
 
+// ThinkingContent holds a prior-turn reasoning or redacted thinking block so
+// Anthropic thinking signatures and Gemini thought signatures round-trip verbatim.
+type ThinkingContent struct {
+	Type      string `json:"type"` // "thinking" or "redacted_thinking"
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	Data      string `json:"data,omitempty"` // opaque redacted_thinking or encrypted_content payload
+}
+
+func (ThinkingContent) contentBlock() {}
+
 // ImageContent holds an image content block.
 type ImageContent struct {
 	Type         string        `json:"type"`
@@ -219,11 +230,17 @@ type ResponseFormat struct {
 
 // ReasoningConfig controls model thinking/reasoning features where supported.
 type ReasoningConfig struct {
-	// Effort is provider-defined. Common values: none, minimal, low, medium, high, xhigh.
+	// Mode selects provider thinking mode where supported ("enabled", "adaptive", "disabled").
+	Mode string `json:"mode,omitempty"`
+
+	// Effort is provider-defined. Common values: none, minimal, low, medium, high, xhigh, max.
 	Effort string `json:"effort,omitempty"`
 
 	// BudgetTokens caps reasoning/thinking tokens where supported.
 	BudgetTokens int `json:"budget_tokens,omitempty"`
+
+	// Summary requests Responses API reasoning summary granularity ("auto", "concise", "detailed").
+	Summary string `json:"summary,omitempty"`
 
 	// IncludeThoughts requests provider-visible thought summaries, not raw private chain-of-thought.
 	IncludeThoughts bool `json:"include_thoughts,omitempty"`
@@ -231,10 +248,11 @@ type ReasoningConfig struct {
 
 // ToolCall is a model's request to invoke a function.
 type ToolCall struct {
-	Index    int    `json:"index,omitempty"` // position in parallel tool calls (streaming)
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Function struct {
+	Index            int    `json:"index,omitempty"` // position in parallel tool calls (streaming)
+	ID               string `json:"id"`
+	Type             string `json:"type"`
+	ThoughtSignature string `json:"thought_signature,omitempty"` // Gemini multi-turn tool thought signature
+	Function         struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"` // JSON-encoded arguments
 	} `json:"function"`
@@ -257,7 +275,8 @@ type Request struct {
 	ToolChoice      string         // "auto", "none", "required", or a function name
 	Options         map[string]any // provider-specific extras merged into the official body
 	Metadata        map[string]string
-	Store           *bool // OpenAI store flag when non-nil
+	Store           *bool    // OpenAI store flag when non-nil
+	Include         []string // Responses API include fields (e.g. "reasoning.encrypted_content")
 
 	ResponseFormat    *ResponseFormat
 	Reasoning         *ReasoningConfig
@@ -276,35 +295,39 @@ type Request struct {
 
 // Response is the unified non-streaming response.
 type Response struct {
-	Content         string // assistant text
-	Reasoning       string // provider-visible reasoning summary, when returned
-	Model           string
-	Provider        string
-	InputTokens     int // total input tokens, including cache-read and cache-write tokens
-	OutputTokens    int // total output tokens, including reasoning tokens
-	TokensUsed      int // InputTokens + OutputTokens
-	ReasoningTokens int // subset of OutputTokens used for reasoning
-	FinishReason    string
-	ToolCalls       []ToolCall
-	CacheUsage      CacheUsage // non-zero when the provider reports cache activity
-	Raw             json.RawMessage
-	CreatedAt       time.Time
+	Content            string // assistant text
+	Reasoning          string // provider-visible reasoning summary, when returned
+	ReasoningSignature string // Anthropic thinking signature or Gemini thoughtSignature
+	EncryptedReasoning string // Responses encrypted_content or Anthropic redacted_thinking data
+	Model              string
+	Provider           string
+	InputTokens        int // total input tokens, including cache-read and cache-write tokens
+	OutputTokens       int // total output tokens, including reasoning tokens
+	TokensUsed         int // InputTokens + OutputTokens
+	ReasoningTokens    int // subset of OutputTokens used for reasoning
+	FinishReason       string
+	ToolCalls          []ToolCall
+	CacheUsage         CacheUsage // non-zero when the provider reports cache activity
+	Raw                json.RawMessage
+	CreatedAt          time.Time
 }
 
 // StreamChunk is one piece of a streaming response.
 type StreamChunk struct {
-	Content         string
-	Reasoning       string
-	ToolCalls       []ToolCall // populated in the final Done chunk when tools were called
-	Done            bool
-	FinishReason    string
-	InputTokens     int        // populated in the final Done chunk when the provider reports it
-	OutputTokens    int        // populated in the final Done chunk when the provider reports it
-	TokensUsed      int        // InputTokens + OutputTokens
-	ReasoningTokens int        // subset of OutputTokens used for internal reasoning
-	CacheUsage      CacheUsage // populated in the final Done chunk when caching is active
-	Raw             json.RawMessage
-	Error           error
+	Content            string
+	Reasoning          string
+	ReasoningSignature string
+	EncryptedReasoning string
+	ToolCalls          []ToolCall // populated in the final Done chunk when tools were called
+	Done               bool
+	FinishReason       string
+	InputTokens        int        // populated in the final Done chunk when the provider reports it
+	OutputTokens       int        // populated in the final Done chunk when the provider reports it
+	TokensUsed         int        // InputTokens + OutputTokens
+	ReasoningTokens    int        // subset of OutputTokens used for internal reasoning
+	CacheUsage         CacheUsage // populated in the final Done chunk when caching is active
+	Raw                json.RawMessage
+	Error              error
 }
 
 // EmbedRequest is the unified embedding request.

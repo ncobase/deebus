@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.10.0] - 2026-11-22
+
+### Added
+
+- Registered `"grok"` (xAI) and `"openai-compatible"` aliases in `providers` registry and default endpoints.
+- Added `ThinkingContent` (`ContentBlock`), `ToolCall.ThoughtSignature`, `Response.ReasoningSignature`, `Response.EncryptedReasoning`, and corresponding `StreamChunk` / `StreamResult` fields for lossless multi-turn thinking and tool signatures.
+- Added `ReasoningConfig.Mode` (`"enabled"`, `"adaptive"`, `"disabled"`), `ReasoningConfig.Summary` (`"auto"`, `"concise"`, `"detailed"`), and `Request.Include` (`"reasoning.encrypted_content"`).
+- Mapped Anthropic `output_config.effort` and Gemini `thinkingConfig.thinkingLevel` (`MINIMAL`, `LOW`, `MEDIUM`, `HIGH`, `XHIGH`).
+
+### Fixed
+
+- Separated OpenAI Chat Completions streaming `delta.reasoning_content` / `delta.reasoning` into `StreamChunk.Reasoning` instead of mixing into `StreamChunk.Content`, and sent top-level `reasoning_effort` for Chat Completions mode.
+- Separated Gemini `part.thought: true` into `Reasoning`, preserved `part.thoughtSignature` across `Complete`, `Stream`, and `ConvertToGeminiFormat`, and kept streamed Gemini tool calls across earlier chunks.
+- Decoded Anthropic `thinking` / `thinking_delta` (`Thinking`), `signature` / `signature_delta`, and `redacted_thinking`, and sorted parallel `tool_calls` deterministically by block/output index across Anthropic, OpenAI Chat Completions, and OpenAI Responses streams.
+
 ## [1.9.0] - 2026-10-08
 
 ### Added

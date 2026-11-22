@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -70,8 +71,10 @@ func openAIChatBody(req *Request) (map[string]any, error) {
 	if rf := openAIResponseFormat(req.ResponseFormat); rf != nil {
 		body["response_format"] = rf
 	}
-	if reasoning := reasoningMap(req.Reasoning); reasoning != nil {
-		body["reasoning"] = reasoning
+	if req.Reasoning != nil {
+		if effort := strings.TrimSpace(req.Reasoning.Effort); effort != "" {
+			body["reasoning_effort"] = effort
+		}
 	}
 	if len(req.Tools) > 0 {
 		body["tools"] = req.Tools
@@ -186,17 +189,19 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 		return nil, fmt.Errorf("empty choices in response")
 	}
 
-	content := result.Choices[0].Message.Content
-	if strings.TrimSpace(content) == "" {
-		content = result.Choices[0].Message.ReasoningContent
+	msg := result.Choices[0].Message
+	reasoningText := msg.ReasoningContent
+	if reasoningText == "" {
+		reasoningText = msg.Reasoning
 	}
-	if strings.TrimSpace(content) == "" {
-		content = result.Choices[0].Message.Reasoning
+	content := msg.Content
+	if strings.TrimSpace(content) == "" && len(msg.ToolCalls) == 0 && reasoningText != "" {
+		content = reasoningText
 	}
 
 	return &Response{
 		Content:         content,
-		Reasoning:       result.Choices[0].Message.ReasoningContent + result.Choices[0].Message.Reasoning,
+		Reasoning:       reasoningText,
 		Model:           result.Model,
 		Provider:        p.Name(),
 		InputTokens:     result.Usage.PromptTokens,
@@ -204,7 +209,7 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 		TokensUsed:      result.Usage.TotalTokens,
 		ReasoningTokens: result.Usage.CompletionTokensDetails.ReasoningTokens,
 		FinishReason:    result.Choices[0].FinishReason,
-		ToolCalls:       result.Choices[0].Message.ToolCalls,
+		ToolCalls:       msg.ToolCalls,
 		CacheUsage:      CacheUsage{ReadTokens: result.Usage.PromptTokensDetails.CachedTokens},
 		Raw:             rawBody,
 		CreatedAt:       time.Now(),
@@ -216,13 +221,14 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *Request) (*Response,
 func (p *OpenAIProvider) completeFromSSE(ctx context.Context, req *Request, body []byte) (*Response, error) {
 	ch := p.parseSSEStream(ctx, bytes.NewReader(body))
 
-	var content strings.Builder
+	var content, reasoning strings.Builder
 	var done *StreamChunk
 	for chunk := range ch {
 		if chunk.Error != nil {
 			return nil, chunk.Error
 		}
 		content.WriteString(chunk.Content)
+		reasoning.WriteString(chunk.Reasoning)
 		if chunk.Done {
 			done = chunk
 		}
@@ -231,18 +237,26 @@ func (p *OpenAIProvider) completeFromSSE(ctx context.Context, req *Request, body
 		return nil, fmt.Errorf("no final chunk in SSE response")
 	}
 
+	text := content.String()
+	if strings.TrimSpace(text) == "" && len(done.ToolCalls) == 0 {
+		text = reasoning.String()
+	}
+
 	return &Response{
-		Content:         content.String(),
-		Model:           req.Model,
-		Provider:        p.Name(),
-		InputTokens:     done.InputTokens,
-		OutputTokens:    done.OutputTokens,
-		TokensUsed:      done.TokensUsed,
-		ReasoningTokens: done.ReasoningTokens,
-		FinishReason:    done.FinishReason,
-		ToolCalls:       done.ToolCalls,
-		CacheUsage:      done.CacheUsage,
-		CreatedAt:       time.Now(),
+		Content:            text,
+		Reasoning:          reasoning.String(),
+		ReasoningSignature: done.ReasoningSignature,
+		EncryptedReasoning: done.EncryptedReasoning,
+		Model:              req.Model,
+		Provider:           p.Name(),
+		InputTokens:        done.InputTokens,
+		OutputTokens:       done.OutputTokens,
+		TokensUsed:         done.TokensUsed,
+		ReasoningTokens:    done.ReasoningTokens,
+		FinishReason:       done.FinishReason,
+		ToolCalls:          done.ToolCalls,
+		CacheUsage:         done.CacheUsage,
+		CreatedAt:          time.Now(),
 	}, nil
 }
 
@@ -251,45 +265,12 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req *Request) (<-chan *Stre
 	if normalizeAPIMode(p.cfg.APIMode) == "responses" {
 		return p.streamResponses(ctx, req)
 	}
-	body := map[string]any{
-		"model":          req.Model,
-		"messages":       ConvertToOpenAIFormat(req.Messages),
-		"stream":         true,
-		"stream_options": map[string]any{"include_usage": true},
+	body, err := openAIChatBody(req)
+	if err != nil {
+		return nil, err
 	}
-	if req.MaxOutputTokens > 0 {
-		body["max_completion_tokens"] = req.MaxOutputTokens
-	} else if req.MaxTokens > 0 {
-		body["max_tokens"] = req.MaxTokens
-	}
-	applyCommonChatOptions(body, req)
-	if rf := openAIResponseFormat(req.ResponseFormat); rf != nil {
-		body["response_format"] = rf
-	}
-	if reasoning := reasoningMap(req.Reasoning); reasoning != nil {
-		body["reasoning"] = reasoning
-	}
-	if len(req.Tools) > 0 {
-		body["tools"] = req.Tools
-		if req.ToolChoice != "" {
-			body["tool_choice"] = openAIToolChoice(req.ToolChoice)
-		}
-	}
-	if req.UserID != "" {
-		body["user"] = req.UserID
-	}
-	if req.Cache != nil {
-		if req.Cache.Key != "" {
-			body["prompt_cache_key"] = req.Cache.Key
-		}
-		retention, err := normalizeOpenAICacheRetention(req.Cache.Retention)
-		if err != nil {
-			return nil, err
-		}
-		if retention != "" {
-			body["prompt_cache_retention"] = retention
-		}
-	}
+	body["stream"] = true
+	body["stream_options"] = map[string]any{"include_usage": true}
 
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -453,17 +434,15 @@ func (p *OpenAIProvider) parseSSEStream(ctx context.Context, r io.Reader) <-chan
 				acc.arguments.WriteString(tc.Function.Arguments)
 			}
 
-			// Emit text content chunks as they arrive.
+			// Emit text content and reasoning deltas cleanly in their respective fields.
 			text := choice.Delta.Content
-			if text == "" {
-				text = choice.Delta.ReasoningContent
+			reasoning := choice.Delta.ReasoningContent
+			if reasoning == "" {
+				reasoning = choice.Delta.Reasoning
 			}
-			if text == "" {
-				text = choice.Delta.Reasoning
-			}
-			if text != "" {
+			if text != "" || reasoning != "" {
 				select {
-				case ch <- &StreamChunk{Content: text}:
+				case ch <- &StreamChunk{Content: text, Reasoning: reasoning}:
 				case <-ctx.Done():
 					return
 				}
@@ -478,8 +457,14 @@ func (p *OpenAIProvider) parseSSEStream(ctx context.Context, r io.Reader) <-chan
 					FinishReason: choice.FinishReason,
 				}
 				if len(accumulators) > 0 {
-					toolCalls := make([]ToolCall, 0, len(accumulators))
-					for idx, acc := range accumulators {
+					indices := make([]int, 0, len(accumulators))
+					for idx := range accumulators {
+						indices = append(indices, idx)
+					}
+					sort.Ints(indices)
+					toolCalls := make([]ToolCall, 0, len(indices))
+					for _, idx := range indices {
+						acc := accumulators[idx]
 						tc := ToolCall{
 							Index: idx,
 							ID:    acc.id,
@@ -863,8 +848,11 @@ func (p *OpenAIProvider) responsesBody(req *Request, stream bool) map[string]any
 	if text := openAIResponsesText(req.ResponseFormat); text != nil {
 		body["text"] = text
 	}
-	if reasoning := reasoningMap(req.Reasoning); reasoning != nil {
+	if reasoning := responsesReasoningMap(req.Reasoning); reasoning != nil {
 		body["reasoning"] = reasoning
+	}
+	if len(req.Include) > 0 {
+		body["include"] = req.Include
 	}
 	if req.Cache != nil && req.Cache.Key != "" {
 		body["prompt_cache_key"] = req.Cache.Key
@@ -879,12 +867,13 @@ func (p *OpenAIProvider) parseResponsesResult(req *Request, rawBody []byte) (*Re
 		Model  string `json:"model"`
 		Status string `json:"status"`
 		Output []struct {
-			Type      string `json:"type"`
-			ID        string `json:"id"`
-			Name      string `json:"name"`
-			CallID    string `json:"call_id"`
-			Arguments string `json:"arguments"`
-			Summary   []struct {
+			Type             string `json:"type"`
+			ID               string `json:"id"`
+			Name             string `json:"name"`
+			CallID           string `json:"call_id"`
+			Arguments        string `json:"arguments"`
+			EncryptedContent string `json:"encrypted_content"`
+			Summary          []struct {
 				Text string `json:"text"`
 			} `json:"summary"`
 			Content []struct {
@@ -911,6 +900,7 @@ func (p *OpenAIProvider) parseResponsesResult(req *Request, rawBody []byte) (*Re
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 	var content, reasoning strings.Builder
+	encryptedReasoning := ""
 	var toolCalls []ToolCall
 	for _, item := range result.Output {
 		switch item.Type {
@@ -929,8 +919,16 @@ func (p *OpenAIProvider) parseResponsesResult(req *Request, rawBody []byte) (*Re
 			tc.Function.Arguments = item.Arguments
 			toolCalls = append(toolCalls, tc)
 		case "reasoning":
+			if item.EncryptedContent != "" {
+				encryptedReasoning = item.EncryptedContent
+			}
 			for _, summary := range item.Summary {
 				reasoning.WriteString(summary.Text)
+			}
+			if len(item.Summary) == 0 {
+				for _, part := range item.Content {
+					reasoning.WriteString(part.Text)
+				}
 			}
 		}
 	}
@@ -943,19 +941,20 @@ func (p *OpenAIProvider) parseResponsesResult(req *Request, rawBody []byte) (*Re
 		model = req.Model
 	}
 	return &Response{
-		Content:         content.String(),
-		Reasoning:       reasoning.String(),
-		Model:           model,
-		Provider:        p.Name(),
-		InputTokens:     result.Usage.InputTokens,
-		OutputTokens:    result.Usage.OutputTokens,
-		TokensUsed:      result.Usage.TotalTokens,
-		ReasoningTokens: result.Usage.OutputTokensDetails.ReasoningTokens,
-		FinishReason:    finish,
-		ToolCalls:       toolCalls,
-		CacheUsage:      CacheUsage{ReadTokens: result.Usage.InputTokensDetails.CachedTokens},
-		Raw:             rawBody,
-		CreatedAt:       time.Now(),
+		Content:            content.String(),
+		Reasoning:          reasoning.String(),
+		EncryptedReasoning: encryptedReasoning,
+		Model:              model,
+		Provider:           p.Name(),
+		InputTokens:        result.Usage.InputTokens,
+		OutputTokens:       result.Usage.OutputTokens,
+		TokensUsed:         result.Usage.TotalTokens,
+		ReasoningTokens:    result.Usage.OutputTokensDetails.ReasoningTokens,
+		FinishReason:       finish,
+		ToolCalls:          toolCalls,
+		CacheUsage:         CacheUsage{ReadTokens: result.Usage.InputTokensDetails.CachedTokens},
+		Raw:                rawBody,
+		CreatedAt:          time.Now(),
 	}, nil
 }
 
@@ -1031,7 +1030,17 @@ func (p *OpenAIProvider) parseResponsesSSE(ctx context.Context, r io.Reader) <-c
 			case "response.completed", "response.incomplete":
 				resp, err := p.parseResponsesResult(&Request{}, event.Response)
 				if err == nil {
-					final = &StreamChunk{Done: true, FinishReason: resp.FinishReason, InputTokens: resp.InputTokens, OutputTokens: resp.OutputTokens, TokensUsed: resp.TokensUsed, ReasoningTokens: resp.ReasoningTokens, CacheUsage: resp.CacheUsage, Raw: event.Response}
+					final = &StreamChunk{
+						Done:               true,
+						FinishReason:       resp.FinishReason,
+						InputTokens:        resp.InputTokens,
+						OutputTokens:       resp.OutputTokens,
+						TokensUsed:         resp.TokensUsed,
+						ReasoningTokens:    resp.ReasoningTokens,
+						EncryptedReasoning: resp.EncryptedReasoning,
+						CacheUsage:         resp.CacheUsage,
+						Raw:                event.Response,
+					}
 					if len(tools) == 0 {
 						final.ToolCalls = resp.ToolCalls
 					}
@@ -1041,7 +1050,13 @@ func (p *OpenAIProvider) parseResponsesSSE(ctx context.Context, r io.Reader) <-c
 		if final == nil {
 			final = &StreamChunk{Done: true}
 		}
-		for idx, acc := range tools {
+		toolIndices := make([]int, 0, len(tools))
+		for idx := range tools {
+			toolIndices = append(toolIndices, idx)
+		}
+		sort.Ints(toolIndices)
+		for _, idx := range toolIndices {
+			acc := tools[idx]
 			tc := ToolCall{Index: idx, ID: acc.id, Type: "function"}
 			tc.Function.Name = acc.name
 			tc.Function.Arguments = acc.arguments.String()

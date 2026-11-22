@@ -12,6 +12,12 @@ func CloneRequest(req *Request) Request {
 	clone.Tools = cloneTools(req.Tools)
 	clone.Options = cloneAnyMap(req.Options)
 	clone.Metadata = cloneStringMap(req.Metadata)
+	if len(req.Stop) > 0 {
+		clone.Stop = append([]string(nil), req.Stop...)
+	}
+	if len(req.Include) > 0 {
+		clone.Include = append([]string(nil), req.Include...)
+	}
 
 	if req.Seed != nil {
 		v := *req.Seed
@@ -78,6 +84,14 @@ func cloneContentBlock(block ContentBlock) ContentBlock {
 			b.CacheControl = &control
 		}
 		return b
+	case ThinkingContent:
+		return b
+	case *ThinkingContent:
+		if b == nil {
+			return b
+		}
+		cp := *b
+		return &cp
 	case *TextContent:
 		if b == nil {
 			return b

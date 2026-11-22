@@ -162,15 +162,67 @@ func reasoningMap(reasoning *ReasoningConfig) map[string]any {
 	return out
 }
 
+func responsesReasoningMap(reasoning *ReasoningConfig) map[string]any {
+	if reasoning == nil {
+		return nil
+	}
+	out := map[string]any{}
+	if effort := strings.TrimSpace(reasoning.Effort); effort != "" {
+		out["effort"] = effort
+	}
+	if summary := strings.TrimSpace(reasoning.Summary); summary != "" {
+		out["summary"] = summary
+	} else if reasoning.IncludeThoughts {
+		out["summary"] = "auto"
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func anthropicThinking(reasoning *ReasoningConfig) map[string]any {
 	if reasoning == nil {
 		return nil
 	}
-	out := map[string]any{"type": "enabled"}
-	if reasoning.BudgetTokens > 0 {
-		out["budget_tokens"] = reasoning.BudgetTokens
+	mode := strings.ToLower(strings.TrimSpace(reasoning.Mode))
+	switch mode {
+	case "disabled":
+		return map[string]any{"type": "disabled"}
+	case "adaptive":
+		return map[string]any{"type": "adaptive"}
+	case "enabled":
+		out := map[string]any{"type": "enabled"}
+		if reasoning.BudgetTokens > 0 {
+			out["budget_tokens"] = reasoning.BudgetTokens
+		}
+		return out
+	default:
+		if reasoning.BudgetTokens > 0 {
+			return map[string]any{
+				"type":          "enabled",
+				"budget_tokens": reasoning.BudgetTokens,
+			}
+		}
+		if reasoning.IncludeThoughts || strings.TrimSpace(reasoning.Effort) != "" {
+			return map[string]any{"type": "adaptive"}
+		}
+		return nil
 	}
-	return out
+}
+
+func anthropicOutputConfig(reasoning *ReasoningConfig) map[string]any {
+	if reasoning == nil {
+		return nil
+	}
+	effort := strings.ToLower(strings.TrimSpace(reasoning.Effort))
+	switch effort {
+	case "", "none":
+		return nil
+	case "minimal":
+		effort = "low"
+	}
+	return map[string]any{"effort": effort}
 }
 
 func geminiThinkingConfig(reasoning *ReasoningConfig) map[string]any {
@@ -180,6 +232,19 @@ func geminiThinkingConfig(reasoning *ReasoningConfig) map[string]any {
 	out := map[string]any{}
 	if reasoning.BudgetTokens > 0 {
 		out["thinkingBudget"] = reasoning.BudgetTokens
+	} else if effort := strings.ToLower(strings.TrimSpace(reasoning.Effort)); effort != "" {
+		switch effort {
+		case "minimal", "none":
+			out["thinkingLevel"] = "MINIMAL"
+		case "low":
+			out["thinkingLevel"] = "LOW"
+		case "medium":
+			out["thinkingLevel"] = "MEDIUM"
+		case "high":
+			out["thinkingLevel"] = "HIGH"
+		case "xhigh", "max":
+			out["thinkingLevel"] = "XHIGH"
+		}
 	}
 	if reasoning.IncludeThoughts {
 		out["includeThoughts"] = true

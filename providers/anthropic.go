@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -74,12 +75,14 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 
 	var result struct {
 		Content []struct {
-			Type     string `json:"type"`
-			Text     string `json:"text"`
-			Thinking string `json:"thinking"`
-			ID       string `json:"id"`
-			Name     string `json:"name"`
-			Input    any    `json:"input"`
+			Type      string `json:"type"`
+			Text      string `json:"text"`
+			Thinking  string `json:"thinking"`
+			Signature string `json:"signature"`
+			Data      string `json:"data"`
+			ID        string `json:"id"`
+			Name      string `json:"name"`
+			Input     any    `json:"input"`
 		} `json:"content"`
 		Usage struct {
 			InputTokens              int `json:"input_tokens"`
@@ -101,16 +104,25 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 
 	content := ""
 	thinking := ""
+	thinkingSig := ""
+	encryptedReasoning := ""
 	var toolCalls []ToolCall
 	for _, block := range result.Content {
 		switch block.Type {
 		case "text":
-			content = block.Text
+			content += block.Text
 		case "thinking":
 			if block.Thinking != "" {
 				thinking += block.Thinking
 			} else {
 				thinking += block.Text
+			}
+			if block.Signature != "" {
+				thinkingSig = block.Signature
+			}
+		case "redacted_thinking":
+			if block.Data != "" {
+				encryptedReasoning = block.Data
 			}
 		case "tool_use":
 			args, _ := json.Marshal(block.Input)
@@ -123,7 +135,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 			toolCalls = append(toolCalls, tc)
 		}
 	}
-	if strings.TrimSpace(content) == "" && thinking != "" {
+	if strings.TrimSpace(content) == "" && len(toolCalls) == 0 && thinking != "" {
 		content = thinking
 	}
 
@@ -134,15 +146,17 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 		result.Usage.CacheCreationInputTokens
 
 	return &Response{
-		Content:      content,
-		Reasoning:    thinking,
-		Model:        result.Model,
-		Provider:     p.Name(),
-		InputTokens:  totalInput,
-		OutputTokens: result.Usage.OutputTokens,
-		TokensUsed:   totalInput + result.Usage.OutputTokens,
-		FinishReason: result.StopReason,
-		ToolCalls:    toolCalls,
+		Content:            content,
+		Reasoning:          thinking,
+		ReasoningSignature: thinkingSig,
+		EncryptedReasoning: encryptedReasoning,
+		Model:              result.Model,
+		Provider:           p.Name(),
+		InputTokens:        totalInput,
+		OutputTokens:       result.Usage.OutputTokens,
+		TokensUsed:         totalInput + result.Usage.OutputTokens,
+		FinishReason:       result.StopReason,
+		ToolCalls:          toolCalls,
 		CacheUsage: CacheUsage{
 			CreatedTokens: result.Usage.CacheCreationInputTokens,
 			ReadTokens:    result.Usage.CacheReadInputTokens,
@@ -200,7 +214,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 
 		var inputTokens, outputTokens int
 		var cacheCreated, cacheRead int
-		var stopReason string
+		var stopReason, thinkingSig, encryptedReasoning string
 
 		// The event shape varies by Anthropic SSE event type.
 		var event struct {
@@ -212,6 +226,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 				Type string `json:"type"`
 				ID   string `json:"id"`
 				Name string `json:"name"`
+				Data string `json:"data"`
 			} `json:"content_block"`
 
 			// content_block_delta
@@ -219,6 +234,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 				Type        string `json:"type"`
 				Text        string `json:"text"`
 				Thinking    string `json:"thinking"`
+				Signature   string `json:"signature"`
 				PartialJSON string `json:"partial_json"`
 				StopReason  string `json:"stop_reason"`
 			} `json:"delta"`
@@ -252,9 +268,11 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 			event.ContentBlock.Type = ""
 			event.ContentBlock.ID = ""
 			event.ContentBlock.Name = ""
+			event.ContentBlock.Data = ""
 			event.Delta.Type = ""
 			event.Delta.Text = ""
 			event.Delta.Thinking = ""
+			event.Delta.Signature = ""
 			event.Delta.PartialJSON = ""
 			event.Delta.StopReason = ""
 
@@ -274,6 +292,9 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 					toolID:    event.ContentBlock.ID,
 					toolName:  event.ContentBlock.Name,
 				}
+				if event.ContentBlock.Type == "redacted_thinking" && event.ContentBlock.Data != "" {
+					encryptedReasoning = event.ContentBlock.Data
+				}
 
 			case "content_block_delta":
 				acc, ok := blocks[event.Index]
@@ -289,6 +310,15 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 					if thought != "" {
 						select {
 						case ch <- &StreamChunk{Reasoning: thought}:
+						case <-ctx.Done():
+							return
+						}
+					}
+				case "signature_delta":
+					if event.Delta.Signature != "" {
+						thinkingSig += event.Delta.Signature
+						select {
+						case ch <- &StreamChunk{ReasoningSignature: event.Delta.Signature}:
 						case <-ctx.Done():
 							return
 						}
@@ -310,29 +340,38 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req *Request) (<-chan *S
 				outputTokens = event.Usage.OutputTokens
 
 			case "message_stop":
-				// Assemble any tool calls from accumulated blocks.
-				var toolCalls []ToolCall
-				for _, acc := range blocks {
+				// Assemble tool calls deterministically by block index.
+				indices := make([]int, 0, len(blocks))
+				for idx, acc := range blocks {
 					if acc.blockType == "tool_use" {
-						tc := ToolCall{
-							ID:   acc.toolID,
-							Type: "function",
-						}
-						tc.Function.Name = acc.toolName
-						tc.Function.Arguments = acc.jsonBuilder.String()
-						toolCalls = append(toolCalls, tc)
+						indices = append(indices, idx)
 					}
+				}
+				sort.Ints(indices)
+				var toolCalls []ToolCall
+				for _, idx := range indices {
+					acc := blocks[idx]
+					tc := ToolCall{
+						Index: idx,
+						ID:    acc.toolID,
+						Type:  "function",
+					}
+					tc.Function.Name = acc.toolName
+					tc.Function.Arguments = acc.jsonBuilder.String()
+					toolCalls = append(toolCalls, tc)
 				}
 				// inputTokens from message_start is only the uncached portion;
 				// add cache buckets for the true total input.
 				totalInput := inputTokens + cacheCreated + cacheRead
 				final := &StreamChunk{
-					Done:         true,
-					FinishReason: stopReason,
-					InputTokens:  totalInput,
-					OutputTokens: outputTokens,
-					TokensUsed:   totalInput + outputTokens,
-					ToolCalls:    toolCalls,
+					Done:               true,
+					FinishReason:       stopReason,
+					InputTokens:        totalInput,
+					OutputTokens:       outputTokens,
+					TokensUsed:         totalInput + outputTokens,
+					ReasoningSignature: thinkingSig,
+					EncryptedReasoning: encryptedReasoning,
+					ToolCalls:          toolCalls,
 					CacheUsage: CacheUsage{
 						CreatedTokens: cacheCreated,
 						ReadTokens:    cacheRead,
@@ -454,6 +493,9 @@ func anthropicBody(req *Request, stream bool) map[string]any {
 	}
 	if thinking := anthropicThinking(req.Reasoning); thinking != nil {
 		body["thinking"] = thinking
+	}
+	if oc := anthropicOutputConfig(req.Reasoning); oc != nil {
+		body["output_config"] = oc
 	}
 	if len(req.Tools) > 0 {
 		body["tools"] = ConvertToolsToAnthropic(req.Tools)
